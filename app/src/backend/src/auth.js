@@ -7,7 +7,7 @@
  */
 
 import { betterAuth } from 'better-auth'
-import { mysqlAdapter } from 'better-auth/adapters/mysql'
+import { mysql2 } from 'better-auth/adapters/mysql2'
 import pool from '../utils/db.js'
 
 function buildSocialProviders() {
@@ -22,7 +22,7 @@ function buildSocialProviders() {
 }
 
 export const auth = betterAuth({
-	database: mysqlAdapter(pool),
+	database: mysql2(pool),
 	baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
 	secret: process.env.BETTER_AUTH_SECRET,
 	appName: 'Adamas2Aurum',
