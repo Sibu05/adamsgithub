@@ -4,14 +4,14 @@
 		"cors": "^2.8.6",
 		"dotenv": "^17.4.2",
 		"express": "^5.2.1",
-		"express-mysql-session": "^3.0.3",
+		"express-mysql-session": "^2.1.8",
 		"express-session": "^1.19.0",
 		"mysql2": "^3.23.3",
 		"ws": "^8.21.3"
 	},
 	"devDependencies": {
 		"esbuild": "^0.28.2",
-		"jest-coverage-badges": "^1.1.2"
+		"jest-coverage-badges": "^1.0.0"
 	},
 	"main": "server.js",
 	"name": "a2a-backend",
