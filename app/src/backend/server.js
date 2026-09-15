@@ -53,7 +53,7 @@ const allowed_origins = [
 	'http://127.0.0.1:5173',
 	'http://localhost:3000',
 	'http://127.0.0.1:3000',
-	'https://website.adamas2aurum.workers.dev/',
+	'https://website.adamas2aurum.workers.dev',
 ]
 if (process.env.FRONTEND_URL) allowed_origins.push(process.env.FRONTEND_URL)
 
