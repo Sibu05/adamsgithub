@@ -73,10 +73,10 @@ describe('auth-helpers', () => {
 				(call) => call[0]
 			)
 			expect(calledUrls).toContain(
-				'http://localhost:3000/api/auth/logout'
+				'https://adamas2aurum.onrender.com/api/auth/logout'
 			)
 			expect(calledUrls).toContain(
-				'http://localhost:3000/api/auth/sign-out'
+				'https://adamas2aurum.onrender.com/api/auth/sign-out'
 			)
 			expect(window.location.href).toBe('/')
 		})
