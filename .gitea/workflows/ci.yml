@@ -81,4 +81,3 @@ jobs:
                                     exit 1
                                   fi
                                   echo "Tests passed and coverage thresholds met"
-
