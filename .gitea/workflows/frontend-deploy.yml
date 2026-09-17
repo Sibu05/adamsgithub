@@ -1,14 +1,12 @@
 name: Deploy Frontend to Cloudflare Pages
 
 on:
-        push:
-                branches:
-                        - main
+        pull_request:
+                branches: [main]
 
 jobs:
         frontend-deploy:
                 runs-on: ubuntu-latest
-                if: ${{ vars.ENABLE_FRONTEND_DEPLOY == 'true' }}
                 steps:
                         - name: Checkout repository
                           uses: actions/checkout@v4
@@ -20,6 +18,14 @@ jobs:
                           with:
                                   node-version: '20'
                                   cache: 'npm'
+
+                        - name: Verify localhost references
+                          run: |
+                                  if grep -rl "localhost:3000" app/src/frontend --include="*.js"; then
+                                    exit 0
+                                  fi
+                                  echo "::error::found no localhost references - aborting deploy."
+                                  exit 1
 
                         - name: Point frontend at the production backend
                           run: bash ./switch-env.sh render app/src/frontend
