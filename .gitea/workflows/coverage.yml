@@ -1,11 +1,11 @@
-name: CI
+name: Coverage Run
 
 on:
         pull_request:
                 branches: [main, dev]
 
 jobs:
-        ci:
+        coverage-run:
                 runs-on: ubuntu-latest
                 steps:
                         - name: Checkout Code
