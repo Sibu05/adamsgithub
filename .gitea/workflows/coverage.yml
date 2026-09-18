@@ -1,13 +1,11 @@
-name: CI
+name: Coverage Run
 
 on:
-        push:
-                branches: [main, dev]
         pull_request:
-                branches: [main]
+                branches: [main, dev]
 
 jobs:
-        ci:
+        coverage-run:
                 runs-on: ubuntu-latest
                 steps:
                         - name: Checkout Code
@@ -81,22 +79,3 @@ jobs:
                                     exit 1
                                   fi
                                   echo "Tests passed and coverage thresholds met"
-
-        mirror:
-                runs-on: ubuntu-latest
-                needs: ci
-                if: gitea.ref == 'refs/heads/main' && gitea.event_name == 'push'
-                steps:
-                        - name: Checkout full history
-                          uses: actions/checkout@v4
-                          with:
-                                  fetch-depth: 0
-
-                        - name: Mirror to GitHub
-                          run: |
-                                  git remote add github https://x-token:${{ secrets.MIRROR_TOKEN_GITHUB }}@github.com/Sibu05/adamsgithub.git
-                                  git push github HEAD:main --force
-
-                        - name: Trigger Render Deploy
-                          if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
-                          run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"

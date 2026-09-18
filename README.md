@@ -1,5 +1,6 @@
 # Adamas2Aurum
 
+[![Deployed App](badges/badge-deploy.svg)](https://website.adamas2aurum.workers.dev)
 ![Tests](badges/badge-tests.svg)
 ![Statements](badges/badge-statements.svg)
 ![Branches](badges/badge-branches.svg)

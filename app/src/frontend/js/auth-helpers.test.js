@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals'
+import { API_BASE, API_BASE_WS } from './constants.js'
 import {
 	isAdmin,
 	redirectAfterLogin,
@@ -73,10 +74,10 @@ describe('auth-helpers', () => {
 				(call) => call[0]
 			)
 			expect(calledUrls).toContain(
-				'http://localhost:3000/api/auth/logout'
+				`${API_BASE}/api/auth/logout`
 			)
 			expect(calledUrls).toContain(
-				'http://localhost:3000/api/auth/sign-out'
+				`${API_BASE}/api/auth/sign-out`
 			)
 			expect(window.location.href).toBe('/')
 		})

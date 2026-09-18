@@ -53,6 +53,7 @@ const allowed_origins = [
 	'http://127.0.0.1:5173',
 	'http://localhost:3000',
 	'http://127.0.0.1:3000',
+	'https://website.adamas2aurum.workers.dev',
 ]
 if (process.env.FRONTEND_URL) allowed_origins.push(process.env.FRONTEND_URL)
 
@@ -87,7 +88,9 @@ const session_middleware = session({
 	saveUninitialized: false,
 	cookie: {
 		httpOnly: true,
-		secure: false,
+		secure: process.env.NODE_ENV === 'production',
+		sameSite:
+			process.env.NODE_ENV === 'production' ? 'none' : 'lax',
 		maxAge: 1000 * 60 * 60 * 24, // 24 hours
 	},
 })

@@ -1,21 +1,5 @@
-/**
- * Better Auth server configuration.
- * Adapted from feat/user-story-1-auth for integration into dev.
- *
- * Uses MySQL via mysql2, supports email/password + Google OAuth.
- */
-
 import { betterAuth } from 'better-auth'
-import { createPool } from 'mysql2/promise'
-
-const dbPool = createPool({
-	host: process.env.DB_HOST || 'localhost',
-	port: parseInt(process.env.DB_PORT || '3306', 10),
-	user: process.env.DB_USER || 'root',
-	password: process.env.DB_PASSWORD || '',
-	database: process.env.DB_NAME || 'wits_quest',
-	timezone: 'Z',
-})
+import pool from '../utils/db.js'
 
 function buildSocialProviders() {
 	const providers = {}
@@ -28,14 +12,15 @@ function buildSocialProviders() {
 	return providers
 }
 
-const socialProviders = buildSocialProviders()
-
 export const auth = betterAuth({
-	database: dbPool,
+	database: pool,
 	baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
 	secret: process.env.BETTER_AUTH_SECRET,
 	appName: 'Adamas2Aurum',
-	socialProviders,
+	socialProviders: buildSocialProviders(),
+	advanced: {
+		userSecureCookies: false,
+	},
 	emailAndPassword: {
 		enabled: true,
 		sendResetPassword: async ({ user, url, token }) => {
