@@ -1,5 +1,5 @@
 import pool from '../utils/db.js'
-import { BATTLE_DECK_NO_CARDS } from './battle_socket.js'
+import { BATTLE_DECK_NO_CARDS } from '../utils/battle.js'
 
 const battle_states = new Map()
 
