@@ -115,7 +115,9 @@
 
 			async function fetchLogs() {
 				try {
-					const res = await fetch('http://localhost:3000/api/logs')
+					const res = await fetch(
+						'http://localhost:3000/api/logs'
+					)
 					const text = await res.text()
 					const container =
 						document.getElementById(
