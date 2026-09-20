@@ -1,6 +1,6 @@
 import pool from './db.js'
 
-export const TURN_TIMEOUT_MS = 10 * 1000
+export const TURN_TIMEOUT_MS = 32 * 1000
 export const BATTLE_DECK_NO_CARDS = 5
 
 export async function valid_user_cards(user, deck) {
@@ -72,10 +72,15 @@ export async function abandon_stale_battles() {
 			 SET status = 'ABANDONED', winner_id = NULL, ended_at = NOW()
 			 WHERE status IN ('PENDING', 'ACTIVE')`
 		)
-		console.log(`[Server Startup] Cleaned up ${result.affectedRows} unresolved battle(s).`)
+		console.log(
+			`[Server Startup] Cleaned up ${result.affectedRows} unresolved battle(s).`
+		)
 		return result.affectedRows
 	} catch (err) {
-		console.error('[Server Startup] Error abandoning stale battles:', err)
+		console.error(
+			'[Server Startup] Error abandoning stale battles:',
+			err
+		)
 		throw err
 	}
 }

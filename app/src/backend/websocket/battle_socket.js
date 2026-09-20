@@ -1,6 +1,11 @@
 import { WebSocketServer } from 'ws'
 import pool from '../utils/db.js'
-import { BATTLE_DECK_NO_CARDS, valid_user_cards, get_active_battle } from '../utils/battle.js'
+import {
+	TURN_TIMEOUT_MS,
+	BATTLE_DECK_NO_CARDS,
+	valid_user_cards,
+	get_active_battle,
+} from '../utils/battle.js'
 import {
 	load_battle_state,
 	get_battle_state,
@@ -17,8 +22,7 @@ import {
 	TEAM_ACTIONS,
 } from './battle_effects.js'
 
-/* A mapping from players user_id to the timeout interval
- */
+/* A mapping from players user_id to the timeout interval */
 const disconnected_players = new Map()
 /* A mapping from a players user id to a JS object.
  * user_id -> {
@@ -30,6 +34,38 @@ const disconnected_players = new Map()
  * }
  */
 const active_players = new Map()
+/* A mapping from battle_id to active turn timeout timers */
+const turn_timers = new Map()
+
+function clear_turn_timer(battle_id) {
+	if (turn_timers.has(battle_id)) {
+		const timerData = turn_timers.get(battle_id)
+		clearTimeout(timerData.id)
+		turn_timers.delete(battle_id)
+	}
+}
+
+function start_turn_timer(battle_id) {
+	clear_turn_timer(battle_id)
+	const id = setTimeout(
+		() => handle_turn_timeout(battle_id),
+		TURN_TIMEOUT_MS
+	)
+	turn_timers.set(battle_id, {
+		id: id,
+		started_at: Date.now(),
+		duration: TURN_TIMEOUT_MS,
+	})
+}
+
+function get_turn_timer(battle_id) {
+	if (!turn_timers.has(battle_id)) {
+		return 0
+	}
+	const timerData = turn_timers.get(battle_id)
+	const elapsed = Date.now() - timerData.started_at
+	return Math.max(0, timerData.duration - elapsed)
+}
 
 function get_player_connection(user_id) {
 	return active_players.get(user_id) || null
@@ -467,6 +503,85 @@ export function find_player_battle(user_id) {
 	return state.battle_id
 }
 
+async function handle_turn_timeout(battle_id) {
+	const state = get_battle_state(battle_id)
+	if (!state) {
+		clear_turn_timer(battle_id)
+		return
+	}
+
+	const timed_out_user = state.turn
+	let opponent_result = null
+
+	// Advance turn to next player
+	state.turn = next_turn(state)
+
+	if (state.player2_id === null && state.turn === null) {
+		state.turn_number += 0.5
+		const cpu_result = take_cpu_turn(state)
+		if (cpu_result) {
+			opponent_result = {
+				attacker_slot: cpu_result.attacker_slot,
+				target_slot: cpu_result.target_slot,
+				action: cpu_result.action,
+				...cpu_result.result,
+			}
+			await log_turn(
+				battle_id,
+				state.turn_number,
+				null,
+				state.cards.player2[cpu_result.attacker_slot],
+				state.cards.player1[cpu_result.target_slot],
+				cpu_result.action,
+				cpu_result.result
+			)
+		}
+		state.turn_number += 0.5
+		if (state.turn_number > 1) tick_effects(state)
+		state.turn = next_turn(state)
+	} else {
+		state.turn_number += 0.5
+	}
+
+	if (state.turn_number >= 1 && state.turn_number % 1 === 0) {
+		tick_effects(state)
+	}
+
+	let winner = check_battle_over(state)
+
+	const turn_payload = JSON.stringify({
+		type: 'turn_timeout',
+		battle_id,
+		player_user_id: timed_out_user,
+		player_result: 'turn_timeout',
+		opponent_result,
+		state,
+		turn_timer_ms: 30 * 1000,
+		winner,
+	})
+	await update_battle_players(battle_id, turn_payload)
+
+	if (winner !== -1) {
+		await set_battle_finished(battle_id, 'COMPLETED', winner)
+		await persist_final_health(state)
+
+		const match_results_payload = JSON.stringify({
+			type: 'match_results',
+			winner,
+		})
+		await update_battle_players(battle_id, match_results_payload)
+		clear_turn_timer(battle_id)
+		clear_player_connection(state.player1_id)
+		clear_player_connection(state.player2_id)
+		clear_battle_state(battle_id)
+
+		broadcast_lobby_presence()
+	} else {
+		// Restart timer for the next turn
+		start_turn_timer(battle_id)
+	}
+}
+
 export const battleWss = new WebSocketServer({ noServer: true })
 
 battleWss.on('connection', (ws, request) => {
@@ -527,6 +642,9 @@ battleWss.on('connection', (ws, request) => {
 								type: 'state_update',
 								battle_id: old_battle_id,
 								state,
+								turn_timer_ms: get_turn_timer(
+									old_battle_id
+								) - 1 * 1000,
 							})
 						ws.send(state_payload)
 					} else {
@@ -666,10 +784,6 @@ battleWss.on('connection', (ws, request) => {
 
 					broadcast_lobby_presence()
 				} catch (err) {
-					console.error(
-						'Error starting PvP battle:',
-						err
-					)
 					ws.send(
 						JSON.stringify({
 							reject_type: msg.type,
@@ -702,10 +816,6 @@ battleWss.on('connection', (ws, request) => {
 
 					broadcast_lobby_presence()
 				} catch (err) {
-					console.error(
-						'Error starting NPC battle:',
-						err
-					)
 					ws.send(
 						JSON.stringify({
 							reject_type: msg.type,
@@ -757,16 +867,15 @@ battleWss.on('connection', (ws, request) => {
 						type: 'state_update',
 						battle_id: state.battle_id,
 						state,
+						turn_timer_ms: 30 * 1000,
 					})
 					await update_battle_players(
 						player_info.battle_id,
 						state_payload
 					)
+
+					start_turn_timer(player_info.battle_id)
 				} catch (err) {
-					console.error(
-						'Deck submission error:',
-						err
-					)
 					ws.send(
 						JSON.stringify({
 							reject_type: msg.type,
@@ -792,6 +901,7 @@ battleWss.on('connection', (ws, request) => {
 					state.player1_id === user_id
 						? state.player2_id
 						: state.player1_id
+				clear_turn_timer(battle_id)
 				await set_battle_finished(
 					battle_id,
 					'FORFEITED',
@@ -991,6 +1101,7 @@ battleWss.on('connection', (ws, request) => {
 					opponent_result,
 					battle_id: state.battle_id,
 					state,
+					turn_timer_ms: 30 * 1000,
 					winner,
 				})
 				await update_battle_players(
@@ -999,6 +1110,7 @@ battleWss.on('connection', (ws, request) => {
 				)
 
 				if (winner !== -1) {
+					clear_turn_timer(battle_id)
 					await set_battle_finished(
 						battle_id,
 						'COMPLETED',
@@ -1022,8 +1134,9 @@ battleWss.on('connection', (ws, request) => {
 						state.player2_id
 					)
 					clear_battle_state(battle_id)
-
 					broadcast_lobby_presence()
+				} else {
+					start_turn_timer(battle_id)
 				}
 			} else {
 				ws.send(
@@ -1046,7 +1159,7 @@ battleWss.on('connection', (ws, request) => {
 	})
 
 	ws.on('error', (ev) => {
-		console.log(
+		console.error(
 			`[WebSocket Error] ${new Date().toISOString()} - `,
 			ev
 		)
@@ -1106,6 +1219,7 @@ battleWss.on('connection', (ws, request) => {
 					null
 				)
 				await persist_final_health(state)
+				clear_turn_timer(battle_id)
 				clear_battle_state(player.battle_id)
 			}, 120000) // 2 minutes
 			disconnected_players.set(player.user_id, timeout_id)
