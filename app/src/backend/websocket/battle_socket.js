@@ -1,6 +1,6 @@
 import { WebSocketServer } from 'ws'
 import pool from '../utils/db.js'
-import { valid_user_cards, get_active_battle } from '../utils/battle.js'
+import { BATTLE_DECK_NO_CARDS, valid_user_cards, get_active_battle } from '../utils/battle.js'
 import {
 	load_battle_state,
 	get_battle_state,
@@ -16,8 +16,6 @@ import {
 	tick_effects,
 	TEAM_ACTIONS,
 } from './battle_effects.js'
-
-export const BATTLE_DECK_NO_CARDS = 5
 
 /* A mapping from players user_id to the timeout interval
  */

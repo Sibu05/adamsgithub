@@ -33,19 +33,20 @@ import leaderboard_routes from './routes/leaderboard.js'
 import sync_routes from './routes/sync.js'
 import campaign_routes from './routes/campaigns.js'
 import analytics_routes from './routes/analytics.js'
+import qr_routes from './routes/qr.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
 import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
-
-import qr_routes from './routes/qr.js'
+import { log_buffer } from './utils/logs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 const PORT = process.env.PORT || 3000
 
+app.set('trust proxy', 1)
 app.use(express.json())
 const allowed_origins = [
 	'http://localhost:8055',
@@ -133,9 +134,22 @@ app.use(async (req, res, next) => {
 
 	// 2. Better Auth session (Google OAuth)
 	try {
-		const bSession = await auth.api.getSession({
-			headers: fromNodeHeaders(req.headers),
-		})
+		const bSession = await Promise.race([
+			auth.api.getSession({
+				headers: fromNodeHeaders(req.headers),
+			}),
+			new Promise((_, reject) =>
+				setTimeout(
+					() =>
+						reject(
+							new Error(
+								'Better Auth timeout'
+							)
+						),
+					3000
+				)
+			),
+		])
 		if (bSession?.user) {
 			const [users] = await pool.query(
 				'SELECT user_id, name, email, avatar_url, points FROM users WHERE email = ?',
@@ -167,6 +181,10 @@ app.use(async (req, res, next) => {
 		}
 	} catch (err) {
 		// Silently continue for unauthenticated requests
+		console.warn(
+			'Better Auth session resolution skipped/failed:',
+			err.message
+		)
 	}
 	next()
 })
@@ -176,9 +194,12 @@ app.use('/api/events', pool_routes)
 app.use('/api/events', event_routes)
 app.use('/api/cards', card_routes)
 app.use('/api/trivia', trivia_routes)
-// User Story 6 — question authoring. Mounted at /api so the single
-// router can serve both /api/events/:eventId/questions and /api/questions/:id.
-app.use('/api', question_routes)
+app.get('/api/logs', (req, res) => {
+	if (req.query.format === 'json') {
+		return res.json({ logs: log_buffer })
+	}
+	res.type('text/plain').send(log_buffer.join('\n'))
+})
 
 // User Story 7 — global points leaderboard. Public read; the "/me"
 // sub-route is the only part that requires a session.
@@ -209,6 +230,10 @@ app.get('/api/me', async (req, res) => {
 	}
 	res.json(req.user)
 })
+
+// User Story 6 — question authoring. Mounted at /api so the single
+// router can serve both /api/events/:eventId/questions and /api/questions/:id.
+app.use('/api', question_routes)
 
 // ---------------------------------------------------------------------------
 // Static file serving — backend serves the frontend so everything runs
@@ -248,6 +273,9 @@ app.get('/pages/battle.html', (_req, res) => {
 })
 app.get('/pages/leaderboard.html', (_req, res) => {
 	res.sendFile(path.join(pagesDir, 'leaderboard.html'))
+})
+app.get('/pages/logs.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'logs.html'))
 })
 
 // ---------------------------------------------------------------------------

@@ -1,12 +1,14 @@
 import { battleWss } from './battle_socket.js'
+import { abandon_stale_battles } from '../utils/battle.js'
 
 let is_router_attached = false
 
-export function setup_websocket_router(server, session_middleware) {
+export async function setup_websocket_router(server, session_middleware) {
 	if (is_router_attached) {
 		server.removeAllListeners('upgrade')
 	}
 	is_router_attached = true
+	abandon_stale_battles()
 
 	server.on('upgrade', (request, socket, head) => {
 		if (
