@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0"
+		/>
+		<title>Backend Live Logs</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				background-color: #0d1117;
+				color: #c9d1d9;
+				font-family: 'Courier New', Courier, monospace;
+				padding: 16px;
+				display: flex;
+				flex-direction: column;
+				height: 100vh;
+			}
+			header {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				padding-bottom: 12px;
+				border-bottom: 1px solid #30363d;
+				margin-bottom: 12px;
+			}
+			h1 {
+				font-size: 1.2rem;
+				color: #58a6ff;
+			}
+			.controls {
+				display: flex;
+				gap: 8px;
+				align-items: center;
+			}
+			button {
+				background: #21262d;
+				color: #c9d1d9;
+				border: 1px solid #363b42;
+				padding: 6px 12px;
+				border-radius: 6px;
+				cursor: pointer;
+				font-size: 0.85rem;
+			}
+			button:hover {
+				background: #30363d;
+			}
+			#log-container {
+				flex: 1;
+				background: #161b22;
+				border: 1px solid #30363d;
+				border-radius: 6px;
+				padding: 12px;
+				overflow-y: auto;
+				white-space: pre-wrap;
+				word-break: break-all;
+				font-size: 0.85rem;
+				line-height: 1.4;
+			}
+			.log-WARN {
+				color: #d29922;
+			}
+			.log-ERROR {
+				color: #f85149;
+			}
+			.log-INFO {
+				color: #7ee787;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>Server Console Stream</h1>
+			<div class="controls">
+				<button
+					id="toggle-btn"
+					onclick="toggleAutoScroll()"
+				>
+					Pause Auto-Scroll
+				</button>
+				<button onclick="fetchLogs()">
+					Refresh Now
+				</button>
+				<button onclick="clearDisplay()">
+					Clear View
+				</button>
+			</div>
+		</header>
+		<div id="log-container">Loading server logs...</div>
+
+		<script>
+			let autoScroll = true
+			let timer = null
+
+			function toggleAutoScroll() {
+				autoScroll = !autoScroll
+				document.getElementById(
+					'toggle-btn'
+				).innerText = autoScroll
+					? 'Pause Auto-Scroll'
+					: 'Resume Auto-Scroll'
+			}
+
+			function clearDisplay() {
+				document.getElementById(
+					'log-container'
+				).innerText = ''
+			}
+
+			async function fetchLogs() {
+				try {
+					const res = await fetch('http://localhost:3000/api/logs')
+					const text = await res.text()
+					const container =
+						document.getElementById(
+							'log-container'
+						)
+
+					// Highlight standard log levels
+					const formatted = text
+						.replace(
+							/\[ERROR\]/g,
+							'<span class="log-ERROR">[ERROR]</span>'
+						)
+						.replace(
+							/\[WARN\]/g,
+							'<span class="log-WARN">[WARN]</span>'
+						)
+						.replace(
+							/\[INFO\]/g,
+							'<span class="log-INFO">[INFO]</span>'
+						)
+
+					container.innerHTML =
+						formatted ||
+						'No logs captured yet.'
+
+					if (autoScroll) {
+						container.scrollTop =
+							container.scrollHeight
+					}
+				} catch (err) {
+					console.error(
+						'Failed to fetch backend logs:',
+						err
+					)
+				}
+			}
+
+			fetchLogs()
+			timer = setInterval(fetchLogs, 2000)
+		</script>
+	</body>
+</html>
