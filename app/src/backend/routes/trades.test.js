@@ -32,9 +32,7 @@ function makeApp(sessionUser = { user_id: 1 }) {
 
 async function withServer(app, fn) {
 	const server = createServer(app)
-	await new Promise((resolve) =>
-		server.listen(0, '127.0.0.1', resolve)
-	)
+	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 	const { port } = server.address()
 	try {
 		await fn(`http://127.0.0.1:${port}`)
@@ -80,20 +78,15 @@ function makeConn(opts = {}) {
 
 			if (q.startsWith('select quantity from user_cards')) {
 				const [user_id, card_id] = params
-				const qty =
-					ownership?.[user_id]?.[card_id] ?? 0
+				const qty = ownership?.[user_id]?.[card_id] ?? 0
 				return [qty > 0 ? [{ quantity: qty }] : []]
 			}
 
-			if (
-				q.startsWith('select count(*) as n from trades')
-			) {
+			if (q.startsWith('select count(*) as n from trades')) {
 				return [[{ n: recentAcceptedTrades }]]
 			}
 
-			if (
-				q.startsWith('select card_id, rarity from cards')
-			) {
+			if (q.startsWith('select card_id, rarity from cards')) {
 				const [a, b] = params
 				return [
 					[a, b]
@@ -109,7 +102,12 @@ function makeConn(opts = {}) {
 				const [a, b] = params
 				return [
 					[a, b]
-						.filter((id) => accountAges[id] != null)
+						.filter(
+							(id) =>
+								accountAges[
+									id
+								] != null
+						)
 						.map((id) => ({
 							user_id: id,
 							age_s: accountAges[id],
@@ -123,7 +121,9 @@ function makeConn(opts = {}) {
 			}
 
 			if (
-				q.startsWith('select * from trades where trade_id') &&
+				q.startsWith(
+					'select * from trades where trade_id'
+				) &&
 				q.includes('for update')
 			) {
 				return [lockedTrade ? [lockedTrade] : []]

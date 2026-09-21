@@ -63,10 +63,7 @@ async function fetchCardMap(card_ids) {
  * players' display names. Used by all four list/detail endpoints.
  */
 async function decorateTrade(trade, cardMap = null) {
-	const cardIds = [
-		trade.initiator_card_id,
-		trade.receiver_card_id,
-	]
+	const cardIds = [trade.initiator_card_id, trade.receiver_card_id]
 	const map = cardMap || (await fetchCardMap(cardIds))
 
 	const [players] = await pool.query(
@@ -74,9 +71,7 @@ async function decorateTrade(trade, cardMap = null) {
 		   FROM users WHERE user_id IN (?, ?)`,
 		[trade.initiator_id, trade.receiver_id]
 	)
-	const playerMap = new Map(
-		players.map((p) => [p.user_id, p])
-	)
+	const playerMap = new Map(players.map((p) => [p.user_id, p]))
 
 	return {
 		...trade,
@@ -173,15 +168,10 @@ async function bothPartiesOwnOfferedCards(conn, trade) {
 // the receiver never sees an offer that would fail on accept.
 router.post('/', requireAuth, async (req, res) => {
 	const initiator_id = req.user.user_id
-	const { receiver_id, initiator_card_id, receiver_card_id } =
-		req.body
+	const { receiver_id, initiator_card_id, receiver_card_id } = req.body
 
 	// ── Basic input validation ──
-	if (
-		!receiver_id ||
-		!initiator_card_id ||
-		!receiver_card_id
-	) {
+	if (!receiver_id || !initiator_card_id || !receiver_card_id) {
 		return error(
 			res,
 			400,
@@ -227,8 +217,10 @@ router.post('/', requireAuth, async (req, res) => {
 		}
 
 		// ── Anti-abuse rule 1: daily cap ──
-		const recent =
-			await tradesCompletedInLast24h(conn, initiator_id)
+		const recent = await tradesCompletedInLast24h(
+			conn,
+			initiator_id
+		)
 		if (recent >= DAILY_TRADE_CAP) {
 			await conn.rollback()
 			return error(
@@ -247,10 +239,8 @@ router.post('/', requireAuth, async (req, res) => {
 		const rarityMap = new Map(
 			rarityRows.map((r) => [r.card_id, r.rarity])
 		)
-		const initVal =
-			RARITY_POINTS[rarityMap.get(initiator_card_id)]
-		const recvVal =
-			RARITY_POINTS[rarityMap.get(receiver_card_id)]
+		const initVal = RARITY_POINTS[rarityMap.get(initiator_card_id)]
+		const recvVal = RARITY_POINTS[rarityMap.get(receiver_card_id)]
 		if (initVal == null || recvVal == null) {
 			await conn.rollback()
 			return error(
@@ -275,9 +265,7 @@ router.post('/', requireAuth, async (req, res) => {
 			   FROM users WHERE user_id IN (?, ?)`,
 			[initiator_id, receiver_id]
 		)
-		const tooNew = ageRows.find(
-			(r) => r.age_s < MIN_ACCOUNT_AGE_S
-		)
+		const tooNew = ageRows.find((r) => r.age_s < MIN_ACCOUNT_AGE_S)
 		if (tooNew) {
 			await conn.rollback()
 			return error(
