@@ -1,6 +1,10 @@
 import { WebSocketServer } from 'ws'
 import pool from '../utils/db.js'
-import { BATTLE_DECK_NO_CARDS, valid_user_cards, get_active_battle } from '../utils/battle.js'
+import {
+	BATTLE_DECK_NO_CARDS,
+	valid_user_cards,
+	get_active_battle,
+} from '../utils/battle.js'
 import {
 	load_battle_state,
 	get_battle_state,
