@@ -34,6 +34,7 @@ import sync_routes from './routes/sync.js'
 import campaign_routes from './routes/campaigns.js'
 import analytics_routes from './routes/analytics.js'
 import trades_routes from './routes/trades.js'
+import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
 
 import pool from './utils/db.js'
@@ -213,6 +214,7 @@ app.use('/api/trivia', sync_routes)
 app.use('/api/campaigns', campaign_routes)
 app.use('/api/analytics', analytics_routes)
 app.use('/api/trades', trades_routes)
+app.use('/api/zones', zones_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
