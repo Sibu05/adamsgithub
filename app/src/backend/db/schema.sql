@@ -513,4 +513,21 @@ ALTER TABLE point_transactions
                    'OTHER'
                  ) NOT NULL;
 
+-- ============================================================
+--  PLACEMENT RUNS  (Sprint 3 — procedural event placement)
+--
+--  One row per rotation job run (see placement/rotation_job.js).
+--  Purely observability — nothing reads this back at runtime — so
+--  a run can be inspected after the fact even if it errored out.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS placement_runs (
+    run_id         INT      AUTO_INCREMENT PRIMARY KEY,
+    started_at     DATETIME NOT NULL,
+    finished_at    DATETIME,
+    retired_count  INT      NOT NULL DEFAULT 0,
+    created_count  INT      NOT NULL DEFAULT 0,
+    status         ENUM('SUCCESS','FAILED','SKIPPED') NOT NULL,
+    error          TEXT
+);
+
 SET FOREIGN_KEY_CHECKS = 1;
