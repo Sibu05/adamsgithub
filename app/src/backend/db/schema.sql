@@ -474,4 +474,49 @@ CREATE TABLE IF NOT EXISTS campaigns (
     CONSTRAINT fk_campaign_author FOREIGN KEY (created_by) REFERENCES users (user_id)
 );
 
+-- ============================================================
+--  20. USER TRUST SCORES  (User Story 5 — mocked trust-score table)
+--
+--  Mocked per-user trust scores that front the moderation queue.
+--  The console's moderation view reads this table sorted by
+--  trust_score (lowest first) and shows the evidence array.
+--  This is a stub so the moderation UI can be built before the
+--  real detection pipeline (User Story 4) lands — swap the read
+--  layer (services/trust_score.js → real scorer) once ready — no
+--  schema change needed.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_trust_scores (
+    user_id     INT             NOT NULL PRIMARY KEY,
+    trust_score DECIMAL(5, 2)   NOT NULL,
+    evidence    JSON,
+    reason      TEXT,
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_uts_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    CONSTRAINT chk_uts_score CHECK (trust_score BETWEEN 0 AND 100)
+);
+
+-- ============================================================
+--  21. MODERATION ACTIONS  (User Story 5 — graduated response)
+--
+--  Graduated tiers: WARNING → RESTRICTION → SUSPENSION, not a
+--  binary ban/no-ban. Stores who moderated whom, with evidence
+--  and optional expiry. The users table carries the active
+--  moderation_status for quick enforcement checks.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS moderation_actions (
+    action_id       INT         AUTO_INCREMENT PRIMARY KEY,
+    target_user_id  INT         NOT NULL,
+    moderator_id    INT         NOT NULL,
+    action_type     ENUM('WARNING','RESTRICTION','SUSPENSION') NOT NULL,
+    reason          TEXT,
+    evidence        JSON,
+    duration_days   INT,
+    expires_at      DATETIME,
+    created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_ma_target FOREIGN KEY (target_user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_ma_mod    FOREIGN KEY (moderator_id)   REFERENCES users (user_id)
+);
+
 SET FOREIGN_KEY_CHECKS = 1;

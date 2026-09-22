@@ -5,9 +5,11 @@ import {
 	toDatetimeLocal,
 	toUtcIso,
 	buildCardBody,
+	esc,
+	formatDT,
 } from './utils.js'
 import { API_BASE } from './constants.js'
-import { updateAuthNav, isAdmin, logout } from './auth-helpers.js'
+import { updateAuthNav, isAdmin, isModerator, logout } from './auth-helpers.js'
 
 const AUTH_API = `${API_BASE}/api/auth`
 const CARDS_API = `${API_BASE}/api/cards`
@@ -63,6 +65,7 @@ const tabEvents = document.getElementById('tab-events')
 const tabCards = document.getElementById('tab-cards')
 const tabCampaigns = document.getElementById('tab-campaigns')
 const tabInsights = document.getElementById('tab-insights')
+const tabModeration = document.getElementById('tab-moderation')
 
 // Sub-tabs (event edit view)
 const editLayout = document.getElementById('event-edit-layout')
@@ -93,6 +96,26 @@ const eventSortSelect = document.getElementById('event-sort')
 const cardToolbar = document.getElementById('card-toolbar')
 const cardFilterChips = document.getElementById('card-filter-chips')
 const cardSortSelect = document.getElementById('card-sort')
+
+// Moderation
+const modList = document.getElementById('mod-list')
+const modCount = document.getElementById('mod-count')
+const modLoading = document.getElementById('mod-loading')
+const modEmpty = document.getElementById('mod-empty')
+const modError = document.getElementById('mod-error')
+const modActionsList = document.getElementById('mod-actions-list')
+const modActionsLoading = document.getElementById('mod-actions-loading')
+const modActionsEmpty = document.getElementById('mod-actions-empty')
+const btnModRefresh = document.getElementById('btn-mod-refresh')
+const modModalOverlay = document.getElementById('mod-modal-overlay')
+const modModalTitle = document.getElementById('mod-modal-title')
+const modModalBody = document.getElementById('mod-modal-body')
+const modReason = document.getElementById('mod-reason')
+const modDuration = document.getElementById('mod-duration')
+const modDurationField = document.getElementById('mod-duration-field')
+const modRecommended = document.getElementById('mod-recommended')
+const modModalCancel = document.getElementById('mod-modal-cancel')
+const modModalConfirm = document.getElementById('mod-modal-confirm')
 
 const f = (id) => document.getElementById(id)
 const cf = (id) => document.getElementById(id)
@@ -132,6 +155,7 @@ function hideAllConsoleUI() {
 	tabCards.classList.add('hidden')
 	tabCampaigns?.classList.add('hidden')
 	tabInsights?.classList.add('hidden')
+	tabModeration?.classList.add('hidden')
 
 	if (editLayout) editLayout.classList.add('hidden')
 
@@ -190,7 +214,7 @@ async function checkAccess() {
 
 		updateAuthNav(user)
 
-		if (!isAdmin(user)) {
+		if (!isAdmin(user) && !isModerator(user)) {
 			elAccessDenied.classList.remove('hidden')
 			return
 		}
@@ -221,6 +245,7 @@ tabButtons.forEach((btn) => {
 		tabCards.classList.add('hidden')
 		tabCampaigns?.classList.add('hidden')
 		tabInsights?.classList.add('hidden')
+		tabModeration?.classList.add('hidden')
 		const tab = btn.dataset.tab
 		if (tab === 'cards') {
 			tabCards.classList.remove('hidden')
@@ -235,6 +260,12 @@ tabButtons.forEach((btn) => {
 				loadInsightsOverview()
 				loadHardQuestions()
 				loadStaleEvents()
+			}
+		} else if (tab === 'moderation') {
+			tabModeration.classList.remove('hidden')
+			if (!elConsole.classList.contains('hidden')) {
+				loadModerationQueue()
+				loadModerationActions()
 			}
 		} else {
 			tabEvents.classList.remove('hidden')
@@ -2381,3 +2412,330 @@ async function loadStaleEvents() {
 		showToast(err.message, 'error')
 	}
 }
+
+// ============================================================
+// Moderation queue (User Story 5) — graduated response
+// ============================================================
+let modQueue = []
+let pendingModUser = null
+let pendingModAction = null
+
+function trustClass(score) {
+	if (score < 30) return 'critical'
+	if (score < 50) return 'warn'
+	return 'low'
+}
+function tierLabel(tier) {
+	if (!tier) return '—'
+	return tier.charAt(0) + tier.slice(1).toLowerCase()
+}
+function initialsForMod(name) {
+	if (!name || !name.trim()) return '?'
+	const parts = name.trim().split(/\s+/)
+	return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase()
+}
+
+async function loadModerationQueue() {
+	if (!modList) return
+	modLoading?.classList.remove('hidden')
+	modEmpty?.classList.add('hidden')
+	modError?.classList.add('hidden')
+	modList.innerHTML = ''
+	if (modCount) modCount.textContent = 'Loading…'
+	try {
+		const res = await fetch(`${API_BASE}/api/moderation/flagged`, {
+			credentials: 'include',
+		})
+		if (!res.ok) {
+			if (res.status === 401)
+				throw new Error('Not authenticated')
+			if (res.status === 403)
+				throw new Error('Moderator role required')
+			throw new Error(`Server ${res.status}`)
+		}
+		const data = await res.json()
+		modQueue = data
+		modLoading?.classList.add('hidden')
+		if (!data.length) {
+			modEmpty?.classList.remove('hidden')
+			if (modCount) modCount.textContent = '0 flagged players'
+			return
+		}
+		if (modCount)
+			modCount.textContent = `${data.length} flagged player${data.length !== 1 ? 's' : ''} — sorted by lowest trust first`
+		data.forEach((p) => modList.appendChild(buildModCard(p)))
+	} catch (err) {
+		modLoading?.classList.add('hidden')
+		if (modError) {
+			modError.textContent = `Could not load queue — ${err.message}`
+			modError.classList.remove('hidden')
+		}
+		showToast(err.message, 'error')
+	}
+}
+
+function buildModCard(p) {
+	const li = document.createElement('li')
+	li.className = 'mod-card'
+	li.dataset.userId = p.user_id
+	const tc = trustClass(p.trust_score)
+	const reco = p.recommended_action
+	const recoBadge = reco
+		? `<span class="meta-pill" style="border-color:var(--accent);color:var(--accent);background:var(--accent-glow)">Recommended: ${esc(tierLabel(reco))}</span>`
+		: ''
+	const statusPill =
+		p.moderation_status && p.moderation_status !== 'NONE'
+			? `<span class="meta-pill ${p.moderation_status === 'SUSPENDED' ? 'inactive' : p.moderation_status === 'RESTRICTED' ? 'gold' : ''}">${esc(p.moderation_status)}${p.moderation_expires_at ? ` until ${esc(formatDT(p.moderation_expires_at))}` : ''}</span>`
+			: '<span class="meta-pill">No active sanction</span>'
+	const historyPill =
+		p.prior_count > 0
+			? `<span class="mod-history">History: ${p.prior_count} prior<span class="mod-history-badge">${p.prior_actions.map((a) => esc(a.action_type)).join(' → ')}</span></span>`
+			: '<span class="mod-history">No prior actions</span>'
+
+	const evidenceHtml = (p.evidence || []).length
+		? p.evidence
+				.map((ev) => {
+					const type = esc(
+						ev.type || ev.status || 'FLAG'
+					)
+					const detail = esc(
+						ev.detail ||
+							ev.reason ||
+							ev.status ||
+							JSON.stringify(
+								ev
+							).slice(0, 120)
+					)
+					const meta = []
+					if (ev.distance_meters != null)
+						meta.push(
+							`${Math.round(ev.distance_meters)}m`
+						)
+					if (ev.travel_speed_ms != null)
+						meta.push(
+							`${ev.travel_speed_ms} m/s`
+						)
+					if (ev.event_id != null)
+						meta.push(
+							`event #${ev.event_id}`
+						)
+					if (ev.checked_at)
+						meta.push(
+							esc(
+								formatDT(
+									ev.checked_at
+								) ||
+									ev.checked_at
+							)
+						)
+					const metaStr = meta.length
+						? ` · ${esc(meta.join(' · '))}`
+						: ''
+					return `<div class="mod-evidence-item"><span class="mod-evidence-type">${type}</span><span>${detail}</span><span style="color:var(--text-muted);font-size:0.75rem">${metaStr}</span></div>`
+				})
+				.join('')
+		: '<div class="mod-evidence-item"><span class="mod-evidence-type">NO EVIDENCE</span><span>No structured evidence — trust score only.</span></div>'
+
+	const avatar = p.avatar_url
+		? `<img src="${esc(p.avatar_url)}" alt="" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:1px solid var(--border)" onerror="this.style.display='none'" />`
+		: `<div class="mod-avatar">${esc(initialsForMod(p.name))}</div>`
+
+	li.innerHTML = `
+		<div class="mod-card-top">
+			<div class="mod-user">
+				${avatar}
+				<div>
+					<div style="font-weight:700;color:var(--text)">${esc(p.name || 'Unknown')} <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem">${esc(p.email || '')}</span></div>
+					<div style="font-size:0.78rem;color:var(--text-muted)">ID ${p.user_id} · ${p.points ?? 0} pts · ${statusPill} ${recoBadge}</div>
+					<div style="margin-top:0.25rem;font-size:0.78rem;color:var(--text-muted)">${esc(p.reason || 'Flagged for review')} · Updated ${esc(formatDT(p.updated_at) || p.updated_at || '—')}</div>
+				</div>
+			</div>
+			<div style="text-align:right;display:grid;gap:0.35rem;justify-items:end">
+				<div class="mod-trust ${tc}" title="Trust score (0-100, lower = more suspicious)">Trust ${Number(p.trust_score).toFixed(1)} / 100</div>
+				<div class="mod-rec">${reco ? `System suggests: ${esc(tierLabel(reco))}` : 'No action suggested (trust ≥70)'}</div>
+				${historyPill}
+			</div>
+		</div>
+		<div class="mod-evidence">${evidenceHtml}</div>
+		<div class="mod-actions">
+			<button class="btn btn-ghost btn-sm" data-mod-action="WARNING" style="${reco === 'WARNING' ? 'border-color:var(--accent);color:var(--accent);background:var(--accent-glow)' : ''}">⚠️ Warning</button>
+			<button class="btn btn-ghost btn-sm" data-mod-action="RESTRICTION" style="${reco === 'RESTRICTION' ? 'border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,0.1)' : ''}">⛔ Restrict 3d</button>
+			<button class="btn btn-sm" data-mod-action="SUSPENSION" style="color:var(--danger);border-color:#5a2a2a;background:var(--danger-dim);${reco === 'SUSPENSION' ? 'box-shadow:0 0 0 2px rgba(239,68,68,0.25)' : ''}">🔒 Suspend 7d</button>
+			<button class="btn btn-ghost btn-sm" data-mod-action="HISTORY">History</button>
+		</div>
+	`
+
+	li.querySelectorAll('[data-mod-action]').forEach((btn) => {
+		const action = btn.dataset.modAction
+		if (action === 'HISTORY') {
+			btn.addEventListener('click', async () => {
+				try {
+					const res = await fetch(
+						`${API_BASE}/api/moderation/history/${p.user_id}`,
+						{ credentials: 'include' }
+					)
+					const hist = await res.json()
+					if (!hist.length)
+						return showToast(
+							'No history for this player',
+							'success'
+						)
+					const lines = hist
+						.map(
+							(h) =>
+								`${h.action_type} on ${formatDT(h.created_at) || h.created_at}${h.reason ? ': ' + h.reason : ''}${h.expires_at ? ' (until ' + formatDT(h.expires_at) + ')' : ''}`
+						)
+						.join('\n')
+					showToast(
+						`History for ${p.name}: ${lines.slice(0, 300)}`,
+						'success'
+					)
+				} catch (e) {
+					showToast(e.message, 'error')
+				}
+			})
+			return
+		}
+		btn.addEventListener('click', () => openModModal(p, action))
+	})
+
+	return li
+}
+
+function openModModal(player, actionType) {
+	pendingModUser = player
+	pendingModAction = actionType
+	const tierName = tierLabel(actionType)
+	modModalTitle.textContent = `${tierName} — ${player.name || player.email}`
+	modModalBody.textContent = `Apply a ${tierName.toLowerCase()} to ${player.name || player.email} (trust ${Number(player.trust_score).toFixed(1)}). Evidence: ${player.reason || ' flagged'}. This is tier ${['WARNING', 'RESTRICTION', 'SUSPENSION'].indexOf(actionType) + 1}/3 — graduated so bans are not instant.`
+	if (modRecommended) {
+		if (
+			player.recommended_action &&
+			player.recommended_action !== actionType
+		) {
+			modRecommended.textContent = `System recommends ${tierLabel(player.recommended_action)} for this trust score + history — you chose ${tierName}. Proceed?`
+		} else if (player.recommended_action === actionType) {
+			modRecommended.textContent = `✓ Matches system recommendation (${tierName}).`
+		} else {
+			modRecommended.textContent = ''
+		}
+	}
+	if (modReason) modReason.value = ''
+	if (modDurationField) {
+		if (actionType === 'WARNING') {
+			modDurationField.classList.add('hidden')
+			if (modDuration) modDuration.value = ''
+		} else {
+			modDurationField.classList.remove('hidden')
+			if (modDuration)
+				modDuration.value =
+					actionType === 'SUSPENSION' ? '7' : '3'
+		}
+	}
+	modModalOverlay?.classList.remove('hidden')
+}
+
+function closeModModal() {
+	pendingModUser = null
+	pendingModAction = null
+	modModalOverlay?.classList.add('hidden')
+	if (modReason) modReason.value = ''
+}
+
+async function doModAction() {
+	if (!pendingModUser || !pendingModAction) return
+	const userId = pendingModUser.user_id
+	const actionType = pendingModAction
+	const reason = modReason?.value.trim() || null
+	let duration = null
+	if (actionType !== 'WARNING' && modDuration?.value.trim()) {
+		duration = parseInt(modDuration.value.trim(), 10)
+		if (!Number.isInteger(duration) || duration < 1) {
+			showToast(
+				'Duration must be a positive integer',
+				'error'
+			)
+			return
+		}
+	}
+	const btn = modModalConfirm
+	if (btn) {
+		btn.disabled = true
+		btn.textContent = 'Applying…'
+	}
+	try {
+		const res = await fetch(`${API_BASE}/api/moderation/action`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				target_user_id: userId,
+				action_type: actionType,
+				reason,
+				duration_days: duration,
+				evidence: pendingModUser.evidence || null,
+			}),
+		})
+		const data = await res.json()
+		if (!res.ok)
+			throw new Error(data.error || `Server ${res.status}`)
+		showToast(data.message || `${actionType} applied`, 'success')
+		if (data.graduated_hint)
+			showToast(data.graduated_hint, 'success')
+		closeModModal()
+		loadModerationQueue()
+		loadModerationActions()
+	} catch (err) {
+		showToast(err.message, 'error')
+	} finally {
+		if (btn) {
+			btn.disabled = false
+			btn.textContent = 'Confirm'
+		}
+	}
+}
+
+async function loadModerationActions() {
+	if (!modActionsList) return
+	modActionsLoading?.classList.remove('hidden')
+	modActionsEmpty?.classList.add('hidden')
+	modActionsList.innerHTML = ''
+	try {
+		const res = await fetch(
+			`${API_BASE}/api/moderation/actions?limit=20`,
+			{ credentials: 'include' }
+		)
+		if (!res.ok) throw new Error(`Server ${res.status}`)
+		const data = await res.json()
+		modActionsLoading?.classList.add('hidden')
+		if (!data.length) {
+			modActionsEmpty?.classList.remove('hidden')
+			return
+		}
+		data.forEach((a) => {
+			const li = document.createElement('li')
+			li.className = 'event-card'
+			const tierColor =
+				a.action_type === 'SUSPENSION'
+					? 'color:var(--danger)'
+					: a.action_type === 'RESTRICTION'
+						? 'color:#f59e0b'
+						: 'color:var(--accent)'
+			li.innerHTML = `<div class="event-card-body"><div class="event-card-title"><span style="${tierColor};font-weight:700">${esc(a.action_type)}</span> → ${esc(a.target_name || a.target_email || 'user #' + a.target_user_id)} <span style="font-weight:400;color:var(--text-muted);font-size:0.85rem">by ${esc(a.moderator_name || 'mod #' + a.moderator_id)}</span></div><div class="event-card-desc">${esc(a.reason || 'No reason given')} · ${esc(formatDT(a.created_at) || a.created_at)}${a.expires_at ? ` · until ${esc(formatDT(a.expires_at))}` : ''}</div></div>`
+			modActionsList.appendChild(li)
+		})
+	} catch (err) {
+		modActionsLoading?.classList.add('hidden')
+		showToast(err.message, 'error')
+	}
+}
+
+btnModRefresh?.addEventListener('click', () => {
+	loadModerationQueue()
+	loadModerationActions()
+})
+modModalCancel?.addEventListener('click', closeModModal)
+modModalOverlay?.addEventListener('click', (e) => {
+	if (e.target === modModalOverlay) closeModModal()
+})
+modModalConfirm?.addEventListener('click', doModAction)

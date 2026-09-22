@@ -26,6 +26,8 @@ TRUNCATE TABLE trivia_options;
 TRUNCATE TABLE trivia_questions;
 TRUNCATE TABLE events;
 TRUNCATE TABLE admin_roles;
+TRUNCATE TABLE moderation_actions;
+TRUNCATE TABLE user_trust_scores;
 TRUNCATE TABLE users;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -206,3 +208,33 @@ SET @player_user_id = (SELECT user_id FROM users WHERE email = 'player@example.c
 
 REPLACE INTO user_credentials (user_id, pin_hash)
 VALUES (@player_user_id, '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4');
+
+-- 23. MOCKED TRUST SCORES (User Story 5)
+INSERT INTO user_trust_scores (user_id, trust_score, reason, evidence) VALUES
+(2, 22.50, 'Repeated spoofed location + impossible travel',
+ JSON_ARRAY(
+   JSON_OBJECT('type','SPOOFED_LOCATION','detail','SPOOFED at Constitution Hill (distance 1240m vs 75m radius)','event_id',2,'distance_meters',1240,'status','SPOOFED','checked_at','2026-01-04T10:00:00Z'),
+   JSON_OBJECT('type','IMPOSSIBLE_TRAVEL','detail','85.5 m/s between Gold Reef City and Constitution Hill (2 min interval)','travel_speed_ms',85.5,'prev_event_id',1,'curr_event_id',2,'checked_at','2026-01-04T10:02:00Z'),
+   JSON_OBJECT('type','FAILED_LOCATION','detail','FAILED check at Origins of Gold Reef City (890m out)','event_id',1,'distance_meters',890,'status','FAILED','checked_at','2026-01-03T15:30:00Z')
+ )),
+(@player_user_id, 44.00, 'Velocity anomaly + repeated out-of-range attempts',
+ JSON_ARRAY(
+   JSON_OBJECT('type','IMPOSSIBLE_TRAVEL','detail','42.1 m/s travel flagged','travel_speed_ms',42.1,'checked_at','2026-01-05T09:12:00Z'),
+   JSON_OBJECT('type','FAILED_LOCATION','detail','3 failed location checks in 10 minutes','count',3,'status','FAILED','checked_at','2026-01-05T09:00:00Z')
+ )),
+(@admin_user_id, 58.00, 'Occasional spoof flag (single incident)',
+ JSON_ARRAY(
+   JSON_OBJECT('type','SPOOFED_LOCATION','detail','Single SPOOFED log (possible GPS drift)','distance_meters',310,'status','SPOOFED','checked_at','2026-01-02T11:20:00Z')
+ ));
+
+-- Seed a dedicated moderator account (User Story 5)
+INSERT IGNORE INTO users (provider_id, email, name)
+VALUES ('local:moderator@example.com', 'moderator@example.com', 'Maya Moderator');
+
+SET @mod_user_id = (SELECT user_id FROM users WHERE email = 'moderator@example.com');
+
+REPLACE INTO user_credentials (user_id, pin_hash)
+VALUES (@mod_user_id, '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4');
+
+INSERT IGNORE INTO admin_roles (user_id, role, granted_by)
+VALUES (@mod_user_id, 'MODERATOR', @admin_user_id);

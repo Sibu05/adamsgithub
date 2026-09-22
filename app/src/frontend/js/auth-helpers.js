@@ -10,10 +10,22 @@
 import { API_BASE } from './constants.js'
 import { svgIcon } from './icons.js'
 
-export const ADMIN_ROLES = ['SUPER_ADMIN', 'EVENT_AUTHOR', 'CARD_AUTHOR']
+export const ADMIN_ROLES = [
+	'SUPER_ADMIN',
+	'EVENT_AUTHOR',
+	'CARD_AUTHOR',
+	'MODERATOR',
+]
+export const MODERATOR_ROLES = ['SUPER_ADMIN', 'MODERATOR']
 
 export function isAdmin(user) {
 	return (user?.roles || []).some((role) => ADMIN_ROLES.includes(role))
+}
+
+export function isModerator(user) {
+	return (user?.roles || []).some((role) =>
+		MODERATOR_ROLES.includes(role)
+	)
 }
 
 /**
