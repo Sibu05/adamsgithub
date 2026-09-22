@@ -36,12 +36,14 @@ import analytics_routes from './routes/analytics.js'
 import trades_routes from './routes/trades.js'
 import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
+import placement_routes from './routes/placement.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
 import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
+import { startRotationScheduler } from './placement/rotation_job.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -215,6 +217,7 @@ app.use('/api/campaigns', campaign_routes)
 app.use('/api/analytics', analytics_routes)
 app.use('/api/trades', trades_routes)
 app.use('/api/zones', zones_routes)
+app.use('/api/placement', placement_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
@@ -330,11 +333,36 @@ async function ensure_curation_schema() {
 	} catch {}
 }
 
+async function ensure_placement_schema() {
+	// Procedural event placement (Sprint 3). Guarded the same way as
+	// ensure_curation_schema — additive ALTERs, safe to re-run every
+	// startup, 1060/ER_DUP_FIELDNAME means the column is already there.
+	const alters = [
+		`ALTER TABLE events ADD COLUMN is_procedural BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE events ADD COLUMN placement_zone VARCHAR(64) NULL`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060
+			)
+				console.warn(
+					'[placement migration]',
+					err.message
+				)
+		}
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
+	await ensure_placement_schema()
 }
 
 async function seed_database() {
@@ -375,6 +403,14 @@ try {
 	}
 	if (process.env.LOG_DB === 'true') {
 		await view_database()
+	}
+
+	// Always on — but never under Jest, where JEST_WORKER_ID is set. A
+	// real setInterval hitting a real (test) DB every tick has no place in
+	// a unit test run; startRotationScheduler itself is still exercised
+	// directly by rotation_job.test.js.
+	if (!process.env.JEST_WORKER_ID) {
+		startRotationScheduler(pool)
 	}
 } catch (err) {
 	console.error('error: ', err.message)
