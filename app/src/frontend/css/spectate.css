@@ -1,0 +1,192 @@
+/* Spectate page — reuses battle.css for boards/cards and adds a distinct
+   purple "watching" accent so it never reads as the player's own match. */
+:root {
+	--spectate-accent: #7b3fbf;
+	--spectate-accent-dim: rgba(123, 63, 191, 0.1);
+	--spectate-on-accent: #ffffff;
+}
+
+body.night {
+	--spectate-accent: #b78af0;
+	--spectate-accent-dim: rgba(183, 138, 240, 0.14);
+	--spectate-on-accent: #150a24;
+}
+
+.spectate-header-actions {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+
+/* ── List view ────────────────────────────────────────────── */
+
+.spectate-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.75rem;
+}
+
+.spectate-empty p {
+	margin: 0;
+}
+
+.live-list {
+	list-style: none;
+	margin: 1rem 0 0;
+	padding: 0;
+	display: grid;
+	gap: 0.75rem;
+}
+
+.live-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.8rem 1.1rem;
+	border: 1px solid var(--border);
+	border-left: 4px solid var(--spectate-accent);
+	border-radius: var(--radius);
+	background: var(--surface);
+}
+
+.live-item-title {
+	font-weight: 700;
+}
+
+.live-item-meta {
+	font-size: 0.85rem;
+	color: var(--text-muted);
+}
+
+/* ── Watch view ───────────────────────────────────────────── */
+
+.watching-banner {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.75rem;
+	margin: 1rem 0 0;
+	padding: 0.9rem 1rem;
+	border-radius: var(--radius-lg);
+	background: var(--spectate-accent);
+	color: var(--spectate-on-accent);
+	font-size: 1.6rem;
+	font-weight: 800;
+	letter-spacing: 0.12em;
+}
+
+.watching-demo-tag {
+	font-size: 0.75rem;
+	letter-spacing: 0.08em;
+	padding: 0.15rem 0.5rem;
+	border-radius: 999px;
+	border: 1px solid currentColor;
+}
+
+.spectate-status-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin: 1rem 0;
+	padding: 0.6rem 1.1rem;
+	border: 1px solid var(--spectate-accent);
+	border-radius: var(--radius);
+	background: var(--spectate-accent-dim);
+}
+
+.spectate-title {
+	margin: 0;
+	font-size: 1.2rem;
+}
+
+.spectate-status-right {
+	display: flex;
+	gap: 1rem;
+	align-items: baseline;
+}
+
+.spectate-turn {
+	font-weight: 700;
+	color: var(--spectate-accent);
+}
+
+.spectate-board {
+	padding: 0.75rem;
+	border: 2px solid transparent;
+	border-radius: var(--radius-lg);
+}
+
+.spectate-board.is-turn {
+	border-color: var(--spectate-accent);
+	background: var(--spectate-accent-dim);
+}
+
+.spectate-board .battle-board-label {
+	display: flex;
+	gap: 0.5rem;
+	opacity: 1;
+}
+
+.spectate-side {
+	opacity: 0.6;
+}
+
+/* Spectators can't click cards — no hover affordance. */
+.spectate-card {
+	cursor: default;
+}
+
+.spectate-card.dead {
+	cursor: default;
+}
+
+.spectate-card-hp {
+	margin: 0.25rem 0 0;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+}
+
+.spectate-log-title {
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	opacity: 0.6;
+	margin: 1rem 0 0.5rem;
+}
+
+.spectate-log {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	font-size: 0.9rem;
+}
+
+.spectate-log li {
+	padding: 0.35rem 0.6rem;
+	border-left: 3px solid var(--spectate-accent);
+	margin-bottom: 0.25rem;
+	background: var(--surface);
+}
+
+.spectate-log li:first-child {
+	font-weight: 700;
+}
+
+.spectate-result {
+	margin: 0 0 1rem;
+	padding: 1rem;
+	text-align: center;
+	font-size: 1.4rem;
+	font-weight: 800;
+	border-radius: var(--radius-lg);
+	border: 2px solid var(--spectate-accent);
+	background: var(--spectate-accent-dim);
+}
+
+.spectate-result p {
+	margin: 0;
+}

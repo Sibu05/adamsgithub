@@ -1,4 +1,5 @@
 import { battleWss } from './battle_socket.js'
+import { spectateWss } from './spectate_socket.js'
 import { abandon_stale_battles } from '../utils/battle.js'
 
 let is_router_attached = false
@@ -27,6 +28,8 @@ export async function setup_websocket_router(server, session_middleware) {
 		let targetWss = null
 		if (pathname.startsWith('/ws/battle')) {
 			targetWss = battleWss
+		} else if (pathname.startsWith('/ws/spectate')) {
+			targetWss = spectateWss
 		}
 
 		if (!targetWss) {
