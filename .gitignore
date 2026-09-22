@@ -20,3 +20,5 @@ HANDOFF.md
 __pycache__
 campus.geojson
 HANDOFF.md
+app/src/backend/placement/map.osm
+app/src/backend/placement/scripts/wits_paths.geojson

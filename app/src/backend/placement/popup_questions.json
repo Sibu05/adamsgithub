@@ -1,0 +1,77 @@
+[
+	{
+		"id": "popup_1",
+		"type": "MULTIPLE_CHOICE",
+		"text": "In which South African city is the University of the Witwatersrand located?",
+		"options": ["Cape Town", "Johannesburg", "Durban", "Pretoria"],
+		"correctAnswer": "Johannesburg"
+	},
+	{
+		"id": "popup_2",
+		"type": "TRUE_FALSE",
+		"text": "The University of the Witwatersrand is commonly known as \"Wits\".",
+		"correctAnswer": "true"
+	},
+	{
+		"id": "popup_3",
+		"type": "FILL_BLANK",
+		"text": "Johannesburg is nicknamed the City of ____.",
+		"correctAnswer": "Gold"
+	},
+	{
+		"id": "popup_4",
+		"type": "MULTIPLE_CHOICE",
+		"text": "In which year was the University of the Witwatersrand established as a university?",
+		"options": ["1896", "1904", "1922", "1948"],
+		"correctAnswer": "1922"
+	},
+	{
+		"id": "popup_5",
+		"type": "TRUE_FALSE",
+		"text": "Johannesburg is the capital city of South Africa.",
+		"correctAnswer": "false"
+	},
+	{
+		"id": "popup_6",
+		"type": "MULTIPLE_CHOICE",
+		"text": "Braamfontein, home to Wits' main campus, is located in which South African province?",
+		"options": [
+			"Gauteng",
+			"KwaZulu-Natal",
+			"Western Cape",
+			"Free State"
+		],
+		"correctAnswer": "Gauteng"
+	},
+	{
+		"id": "popup_7",
+		"type": "MULTIPLE_CHOICE",
+		"text": "What is the popular nickname of Wits University's football club?",
+		"options": ["Clever Boys", "Buccaneers", "Chiefs", "Sundowns"],
+		"correctAnswer": "Clever Boys"
+	},
+	{
+		"id": "popup_8",
+		"type": "TRUE_FALSE",
+		"text": "The Wits Great Hall is a well-known landmark building on the Wits University campus.",
+		"correctAnswer": "true"
+	},
+	{
+		"id": "popup_9",
+		"type": "MULTIPLE_CHOICE",
+		"text": "Which mining industry is Johannesburg's founding historically tied to?",
+		"options": [
+			"Diamond mining",
+			"Gold mining",
+			"Coal mining",
+			"Platinum mining"
+		],
+		"correctAnswer": "Gold mining"
+	},
+	{
+		"id": "popup_10",
+		"type": "FILL_BLANK",
+		"text": "Wits University's main campus is located in the Johannesburg suburb of ____.",
+		"correctAnswer": "Braamfontein"
+	}
+]
