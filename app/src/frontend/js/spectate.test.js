@@ -141,7 +141,10 @@ describe('spectate page', () => {
 
 		expect(visible('view-watch')).toBe(true)
 		expect(visible('view-list')).toBe(false)
-		expect($('watch-banner').textContent).toContain('👁 WATCHING')
+		expect($('watch-banner').textContent).toContain('WATCHING')
+		expect(
+			$('watch-banner').querySelector('.watching-eye')
+		).not.toBeNull()
 		expect($('watch-title').textContent).toBe('Alice vs CPU')
 		expect($('watch-turn').textContent).toBe("Alice's turn")
 		expect($('p1-cards').textContent).toContain('40 / 40 HP')
@@ -211,7 +214,10 @@ describe('spectate page', () => {
 		$('btn-demo').click()
 		expect(visible('view-watch')).toBe(true)
 		expect(visible('watch-demo-tag')).toBe(true)
-		expect($('watch-banner').textContent).toContain('👁 WATCHING')
+		expect($('watch-banner').textContent).toContain('WATCHING')
+		expect(
+			$('watch-banner').querySelector('.watching-eye')
+		).not.toBeNull()
 		expect($('watch-title').textContent).toBe(
 			'Thandi (demo) vs Sipho (demo)'
 		)
