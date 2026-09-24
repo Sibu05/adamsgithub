@@ -45,6 +45,7 @@ export function updateAuthNav(user) {
 		'nav-events',
 		'nav-collection',
 		'nav-battle',
+		'nav-spectate',
 		'nav-leaderboard',
 	].map((id) => document.getElementById(id))
 

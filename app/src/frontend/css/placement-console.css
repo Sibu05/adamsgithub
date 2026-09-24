@@ -1,0 +1,66 @@
+/* Procedural Placement tab (console) */
+
+.placement-config-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.2rem 0;
+	color: var(--text-muted);
+}
+.placement-config-row strong {
+	color: var(--text);
+	font-weight: 700;
+}
+
+.placement-event-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid var(--border);
+	font-size: 0.82rem;
+}
+.placement-event-row:last-child {
+	border-bottom: none;
+}
+.placement-event-row .placement-event-title {
+	color: var(--text);
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.placement-event-row .placement-event-time {
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* MapLibre positions the marker ROOT element itself (transform is
+   overwritten on every map move), so the fade/drop animation lives on a
+   child element instead — see placement-console.js's renderEventMarkers. */
+.placement-marker-dot {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--accent, #2f9df0);
+	border: 2px solid #fff;
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+	transition:
+		opacity 280ms ease,
+		transform 280ms ease;
+	opacity: 1;
+	transform: translateY(0) scale(1);
+}
+.placement-marker-dot.placement-marker-enter {
+	opacity: 0;
+	transform: translateY(-10px) scale(0.5);
+}
+.placement-marker-dot.placement-marker-leave {
+	opacity: 0 !important;
+	transform: translateY(8px) scale(0.5) !important;
+}
+
+#placement-map .maplibregl-ctrl-attrib {
+	font-size: 0.65rem;
+}

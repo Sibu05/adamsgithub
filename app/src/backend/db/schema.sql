@@ -323,6 +323,7 @@ CREATE TABLE IF NOT EXISTS point_transactions (
                    'REROLL_PURCHASE',
                    'CARD_SOLD',
                    'SEASON_BONUS',
+                   'ZONE_BONUS',
                    'OTHER'
                  ) NOT NULL,
     reference_id INT,
@@ -472,6 +473,61 @@ CREATE TABLE IF NOT EXISTS campaigns (
     created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_campaign_author FOREIGN KEY (created_by) REFERENCES users (user_id)
+);
+
+-- ============================================================
+--  ZONE OWNERS  (Sprint 3 — Story 8: territory control)
+--
+--  One row per event that currently has an owner. "Owner" is
+--  whoever has accumulated the highest recent points score from
+--  that event's trivia challenges, subject to a defence bonus
+--  for the incumbent.
+--
+--  The score column caches the owner's score at the moment they
+--  took ownership. It is used to apply the incumbent defence
+--  multiplier when a challenger tries to overtake them.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS zone_owners (
+    event_id    INT      NOT NULL PRIMARY KEY,
+    owner_id    INT      NOT NULL,
+    score       INT      NOT NULL DEFAULT 0,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_zone_event FOREIGN KEY (event_id) REFERENCES events (event_id) ON DELETE CASCADE,
+    CONSTRAINT fk_zone_owner FOREIGN KEY (owner_id) REFERENCES users  (user_id)
+);
+
+-- Add ZONE_BONUS to point_transactions reason enum for databases
+-- created before Sprint 3 Story 8. Idempotent — MySQL accepts the
+-- same enum definition every startup.
+ALTER TABLE point_transactions
+    MODIFY COLUMN reason ENUM(
+                   'TRIVIA_WIN',
+                   'COSMETIC_PURCHASE',
+                   'HINT_PURCHASE',
+                   'INTEL_PURCHASE',
+                   'REROLL_PURCHASE',
+                   'CARD_SOLD',
+                   'SEASON_BONUS',
+                   'ZONE_BONUS',
+                   'OTHER'
+                 ) NOT NULL;
+
+-- ============================================================
+--  PLACEMENT RUNS  (Sprint 3 — procedural event placement)
+--
+--  One row per rotation job run (see placement/rotation_job.js).
+--  Purely observability — nothing reads this back at runtime — so
+--  a run can be inspected after the fact even if it errored out.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS placement_runs (
+    run_id         INT      AUTO_INCREMENT PRIMARY KEY,
+    started_at     DATETIME NOT NULL,
+    finished_at    DATETIME,
+    retired_count  INT      NOT NULL DEFAULT 0,
+    created_count  INT      NOT NULL DEFAULT 0,
+    status         ENUM('SUCCESS','FAILED','SKIPPED') NOT NULL,
+    error          TEXT
 );
 
 SET FOREIGN_KEY_CHECKS = 1;
