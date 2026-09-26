@@ -21,6 +21,7 @@ import {
 	TEAM_ACTIONS,
 } from './battle_effects.js'
 import { broadcast_to_spectators, clear_spectators } from './spectate_socket.js'
+import { applyRatingUpdate } from '../services/rating.js'
 
 /* A mapping from players user_id to the timeout interval
  */
@@ -106,24 +107,35 @@ function broadcast_lobby_presence() {
 	}
 }
 
-async function set_battle_finished(battle_id, reason, winner = null) {
-	if (battle_id === null) return
-	if (
-		![
-			'PENDING',
-			'ACTIVE',
-			'COMPLETED',
-			'FORFEITED',
-			'ABANDONED',
-		].includes(reason)
-	)
-		reason = 'ABANDONED'
+async function set_battle_finished(battle_id, reason, winner = null, loser = null) {
+ 	if (battle_id === null) return
+ 	if (
+ 		![
+ 			'PENDING',
+ 			'ACTIVE',
+ 			'COMPLETED',
+ 			'FORFEITED',
+ 			'ABANDONED',
+ 		].includes(reason)
+ 	)
+ 		reason = 'ABANDONED'
 
-	await pool.query(
-		`UPDATE battles SET status = '${reason}', winner_id = ?, ended_at = NOW() WHERE battle_id = ?`,
-		[winner, battle_id]
-	)
-}
+ 	await pool.query(
+ 		`UPDATE battles SET status = '${reason}', winner_id = ?, ended_at = NOW() WHERE battle_id = ?`,
+ 		[winner, battle_id]
+ 	)
+
+	// Ranked rating update. Only fires when both a winner and a human
+	// loser are known — NPC battles pass loser=null and are skipped
+	// naturally, same as the disconnect/abandon path below.
+	if (winner !== null && loser !== null) {
+		try {
+			await applyRatingUpdate(pool, winner, loser)
+		} catch (err) {
+			console.error('rating update failed:', err)
+		}
+	}
+ }
 
 // 1. Create a PvP or NPC Battle row in MySQL
 export async function create_db_battle(player1_id, player2_id = null) {
@@ -801,7 +813,8 @@ battleWss.on('connection', (ws, request) => {
 				await set_battle_finished(
 					battle_id,
 					'FORFEITED',
-					winner
+					winner,
+					user_id
 				)
 				await persist_final_health(state)
 
@@ -1006,10 +1019,15 @@ battleWss.on('connection', (ws, request) => {
 				)
 
 				if (winner !== -1) {
+					const loser =
+						winner === state.player1_id
+							? state.player2_id
+							: state.player1_id
 					await set_battle_finished(
 						battle_id,
 						'COMPLETED',
-						winner
+						winner,
+						loser
 					)
 					await persist_final_health(state)
 

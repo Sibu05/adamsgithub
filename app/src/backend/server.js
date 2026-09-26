@@ -38,6 +38,7 @@ import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
 import battles_routes from './routes/battles.js'
 import placement_routes from './routes/placement.js'
+import ranked_routes from './routes/ranked.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
@@ -45,6 +46,8 @@ import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
 import { startRotationScheduler } from './placement/rotation_job.js'
+import { startSeasonScheduler } from './placement/season_job.js'
+import { ensure_ranked_schema } from './db/ranked_schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -209,6 +212,7 @@ app.get('/api/logs', (req, res) => {
 // User Story 7 — global points leaderboard. Public read; the "/me"
 // sub-route is the only part that requires a session.
 app.use('/api/leaderboard', leaderboard_routes)
+app.use('/api/ranked', ranked_routes)
 
 // User Story 2 (Sprint 2) — offline attempt sync and deferred verification.
 // Mounted under /api/trivia so all trivia-related endpoints share a namespace.
@@ -368,6 +372,7 @@ async function initialize_database() {
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
 	await ensure_placement_schema()
+	await ensure_ranked_schema()
 }
 
 async function seed_database() {
@@ -416,6 +421,7 @@ try {
 	// directly by rotation_job.test.js.
 	if (!process.env.JEST_WORKER_ID) {
 		startRotationScheduler(pool)
+		startSeasonScheduler(pool)
 	}
 } catch (err) {
 	console.error('error: ', err.message)
