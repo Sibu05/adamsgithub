@@ -22,6 +22,7 @@
 		"dev": "node --watch server.js",
 		"start": "node server.js",
 		"db:seed": "node seed.js",
+		"db:seed-wits": "node seed_wits.js",
 		"db:reset": "node reset_db.js",
 		"db:migrate-auth": "node db/migrate_better_auth.js"
 	},
