@@ -38,6 +38,7 @@ import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
 import battles_routes from './routes/battles.js'
 import placement_routes from './routes/placement.js'
+import movement_flags_routes from './routes/movement_flags.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
@@ -45,6 +46,8 @@ import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
 import { startRotationScheduler } from './placement/rotation_job.js'
+import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
+import { resolve_better_auth_user } from './utils/better_auth_sync.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -75,6 +78,18 @@ app.use(
 		credentials: true,
 	})
 )
+
+if (!process.env.SESSION_SECRET) {
+	const msg =
+		'SESSION_SECRET is not set — sessions are signed with the public dev fallback secret, so anyone can forge a session cookie. Set SESSION_SECRET in the environment.'
+	if (process.env.NODE_ENV === 'production') {
+		console.error(
+			`\n${'!'.repeat(72)}\n[SECURITY] ${msg}\n${'!'.repeat(72)}\n`
+		)
+	} else {
+		console.warn(`[session] ${msg}`)
+	}
+}
 
 const MySQLStore = mySQLSession(session)
 const sessionStore = new MySQLStore(
@@ -156,33 +171,20 @@ app.use(async (req, res, next) => {
 			),
 		])
 		if (bSession?.user) {
-			const [users] = await pool.query(
-				'SELECT user_id, name, email, avatar_url, points FROM users WHERE email = ?',
-				[bSession.user.email]
+			// Matched by Google account id, not email alone — see
+			// utils/better_auth_sync.js.
+			const resolved = await resolve_better_auth_user(
+				pool,
+				bSession.user
 			)
-			if (users.length) {
-				req.user = users[0]
+			if (resolved.conflict) {
+				req.auth_conflict = resolved.conflict
 			} else {
-				// First-time Google user — sync into our users table
-				const [result] = await pool.query(
-					`INSERT INTO users (provider_id, email, name, avatar_url, points)
-           VALUES (?, ?, ?, ?, 0)`,
-					[
-						`betterauth:${bSession.user.id}`,
-						bSession.user.email,
-						bSession.user.name,
-						bSession.user.image,
-					]
-				)
-				const [newUsers] = await pool.query(
-					'SELECT user_id, name, email, avatar_url, points FROM users WHERE user_id = ?',
-					[result.insertId]
-				)
-				req.user = newUsers[0]
+				req.user = resolved.user
+				// Keep the express-session cookie in sync so existing code that reads
+				// req.session.user.user_id continues to work for Google-OAuth users.
+				req.session.user = req.user
 			}
-			// Keep the express-session cookie in sync so existing code that reads
-			// req.session.user.user_id continues to work for Google-OAuth users.
-			req.session.user = req.user
 		}
 	} catch (err) {
 		// Silently continue for unauthenticated requests
@@ -220,6 +222,7 @@ app.use('/api/trades', trades_routes)
 app.use('/api/zones', zones_routes)
 app.use('/api/battles', battles_routes)
 app.use('/api/placement', placement_routes)
+app.use('/api/movement-flags', movement_flags_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
@@ -234,6 +237,10 @@ app.get('/api/health', async (req, res) => {
 // Get current authenticated user (used by frontend checkAuthSession)
 // ---------------------------------------------------------------------------
 app.get('/api/me', async (req, res) => {
+	if (!req.user?.user_id && req.auth_conflict) {
+		// Google sign-in refused (email belongs to a PIN account).
+		return res.status(409).json({ error: req.auth_conflict })
+	}
 	if (!req.user?.user_id) {
 		return res.status(401).json({ error: 'Not authenticated' })
 	}
@@ -362,12 +369,62 @@ async function ensure_placement_schema() {
 	}
 }
 
+async function ensure_movement_trust_schema() {
+	// Movement trust check (Sprint 2 anti-cheat v1). The flag lives on the
+	// location check it describes, next to prev_check_id/travel_speed_ms.
+	// Guarded like the other migrations: 1060 = column already there,
+	// 1061 = index already there.
+	const alters = [
+		`ALTER TABLE location_check_log ADD COLUMN movement_flagged BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE location_check_log ADD INDEX idx_lcl_movement_flagged (movement_flagged, checked_at)`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060 &&
+				err.code !== 'ER_DUP_KEYNAME' &&
+				err.errno !== 1061
+			)
+				console.warn(
+					'[movement trust migration]',
+					err.message
+				)
+		}
+	}
+}
+
+async function warn_if_better_auth_tables_missing() {
+	// Read-only check. Better Auth doesn't create its own tables, and
+	// running its migration automatically here would also touch whatever
+	// shared/deployed DB this server points at — so it's an explicit step:
+	// `npm run db:migrate-auth`.
+	try {
+		const { tables, columns } =
+			await pending_better_auth_migrations(auth.options)
+		if (tables.length || columns.length) {
+			console.warn(
+				`[better-auth] Missing ${[...tables, ...columns].join(', ')} — Google and email sign-in will fail until you run: npm run db:migrate-auth`
+			)
+		}
+	} catch (err) {
+		console.warn(
+			'[better-auth] Could not check Better Auth tables:',
+			err.message
+		)
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
 	await ensure_placement_schema()
+	await ensure_movement_trust_schema()
+	await warn_if_better_auth_tables_missing()
 }
 
 async function seed_database() {

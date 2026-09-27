@@ -41,9 +41,9 @@ describe('auth-helpers', () => {
 			expect(window.location.href).toBe('/pages/console.html')
 		})
 
-		test('redirects players to events dashboard', () => {
+		test('redirects players to the main map (same page Google sign-in returns to)', () => {
 			redirectAfterLogin({ roles: [] })
-			expect(window.location.href).toBe('/pages/events.html')
+			expect(window.location.href).toBe('/')
 		})
 	})
 

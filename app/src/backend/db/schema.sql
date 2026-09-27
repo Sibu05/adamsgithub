@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_credentials (
     user_id   INT         NOT NULL PRIMARY KEY,
-    pin_hash  VARCHAR(64) NOT NULL,
+    pin_hash  VARCHAR(255) NOT NULL,
     CONSTRAINT fk_ucred_user FOREIGN KEY (user_id) REFERENCES users (user_id)
 );
 -- ============================================================
@@ -381,29 +381,12 @@ CREATE TABLE IF NOT EXISTS leaderboard_entries (
 -- ============================================================
 --  18. QUESTIONS  (User Story 6 — content-author question authoring)
 --
---  Stores trivia questions attached to an event in three formats:
---  MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK.
---    - correct_answer holds the right answer (the correct option's
---      value for MULTIPLE_CHOICE, "true"/"false" for TRUE_FALSE,
---      and the expected answer text for FILL_BLANK).
---    - options is a JSON array of strings, used ONLY for
---      MULTIPLE_CHOICE (NULL for the other formats).
---  Deleting an event cascades to its questions (ON DELETE CASCADE),
---  which is the SQL equivalent of the Event -> questions relation.
+--  Authored questions live in trivia_questions + trivia_options
+--  (see routes/questions.js). FILL_BLANK stores its accepted answer as
+--  an is_correct option. An older, never-used `questions` table was
+--  defined here — it is no longer created, but existing databases
+--  keep theirs (nothing reads or writes it).
 -- ============================================================
-CREATE TABLE IF NOT EXISTS questions (
-    id             INT           AUTO_INCREMENT PRIMARY KEY,
-    event_id       INT           NOT NULL,
-    type           ENUM('MULTIPLE_CHOICE','TRUE_FALSE','FILL_BLANK') NOT NULL,
-    text           TEXT          NOT NULL,
-    correct_answer VARCHAR(500)  NOT NULL,
-    options        JSON          DEFAULT NULL,
-    created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-    CONSTRAINT fk_us6_question_event FOREIGN KEY (event_id)
-        REFERENCES events (event_id) ON DELETE CASCADE
-);
 
 -- ============================================================
 --  QR FALLBACK TOKENS  (low-accuracy GPS fallback)
@@ -417,6 +400,12 @@ CREATE TABLE IF NOT EXISTS event_qr_tokens (
 
     CONSTRAINT fk_qrt_event FOREIGN KEY (event_id) REFERENCES events (event_id) ON DELETE CASCADE
 );
+
+-- PINs are hashed with scrypt ("scrypt$N$r$p$salt$hash", ~115 chars).
+-- Widens pin_hash on databases created when it held a 64-char SHA-256.
+-- Idempotent, and legacy SHA-256 hashes still fit.
+ALTER TABLE user_credentials
+    MODIFY COLUMN pin_hash VARCHAR(255) NOT NULL;
 
 -- Add FALLBACK_QR to location_check_log status ENUM
 ALTER TABLE location_check_log

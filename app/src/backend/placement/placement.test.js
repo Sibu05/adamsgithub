@@ -172,6 +172,30 @@ describe('generatePlacements — maxLive', () => {
 		})
 		expect(placements).toEqual([])
 	})
+
+	test('liveCount (not activeEvents.length) decides the cap; spacing still uses every active event', () => {
+		// 12 active events but only 2 of them are live pop-ups.
+		const activeEvents = Array.from({ length: 12 }, (_, i) => ({
+			lat: -26.195,
+			lng: 28.019 + i * 0.001,
+		}))
+		const placements = generatePlacements({
+			graph: campusGraph,
+			activeEvents,
+			liveCount: 2,
+			config: { maxLive: 5 },
+			rng: createRng(1),
+			now: 1000,
+		})
+		expect(placements).toHaveLength(3)
+		for (const p of placements)
+			for (const a of activeEvents)
+				expect(
+					haversineMeters(p, a)
+				).toBeGreaterThanOrEqual(
+					DEFAULT_CONFIG.minSpacingMeters
+				)
+	})
 })
 
 describe('generatePlacements — determinism', () => {

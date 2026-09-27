@@ -9,7 +9,9 @@ jest.unstable_mockModule('./db.js', () => ({
 const { default: pool } = await import('./db.js')
 const {
 	BATTLE_DECK_NO_CARDS,
+	MAX_CARDS_PER_CATEGORY,
 	valid_user_cards,
+	deck_violation,
 	get_active_battle,
 	abandon_battle,
 	abandon_stale_battles,
@@ -23,8 +25,15 @@ function makeDeck(count = BATTLE_DECK_NO_CARDS) {
 	return Array.from({ length: count }, (_, i) => ({ card_id: i + 1 }))
 }
 
-function ownedRows(rarities) {
-	return rarities.map((rarity, i) => ({ card_id: i + 1, rarity }))
+// A legal category spread by default (2 + 1 + 1 + 1).
+const MIXED = ['CHARACTER', 'LOCATION', 'INFLUENCE', 'HISTORICAL', 'CHARACTER']
+
+function ownedRows(rarities, categories = MIXED) {
+	return rarities.map((rarity, i) => ({
+		card_id: i + 1,
+		rarity,
+		category: categories[i],
+	}))
 }
 
 beforeEach(() => {
@@ -93,6 +102,81 @@ describe('valid_user_cards', () => {
 			]),
 		])
 		expect(await valid_user_cards(USER, makeDeck())).toBe(false)
+	})
+
+	test(`allows up to MAX_CARDS_PER_CATEGORY (${MAX_CARDS_PER_CATEGORY}) of one category`, async () => {
+		pool.query.mockResolvedValueOnce([
+			ownedRows(Array(5).fill('COMMON'), [
+				'CHARACTER',
+				'CHARACTER',
+				'LOCATION',
+				'LOCATION',
+				'HISTORICAL',
+			]),
+		])
+		expect(await deck_violation(USER, makeDeck())).toBeNull()
+	})
+
+	test('rejects 3 cards of the same category, and says why', async () => {
+		pool.query.mockResolvedValueOnce([
+			ownedRows(Array(5).fill('COMMON'), [
+				'CHARACTER',
+				'CHARACTER',
+				'CHARACTER',
+				'LOCATION',
+				'INFLUENCE',
+			]),
+		])
+		expect(await deck_violation(USER, makeDeck())).toMatch(
+			/At most 2 CHARACTER cards per deck \(got 3\)/
+		)
+	})
+
+	test('an all-one-category deck is rejected', async () => {
+		pool.query.mockResolvedValueOnce([
+			ownedRows(
+				Array(5).fill('COMMON'),
+				Array(5).fill('LOCATION')
+			),
+		])
+		expect(await valid_user_cards(USER, makeDeck())).toBe(false)
+	})
+
+	test('queries category from the cards table (server-side, not trusted from the client)', async () => {
+		pool.query.mockResolvedValueOnce([
+			ownedRows(Array(5).fill('COMMON')),
+		])
+		// Client-sent category is ignored.
+		const deck = makeDeck().map((c) => ({
+			...c,
+			category: 'LOCATION',
+		}))
+		expect(await valid_user_cards(USER, deck)).toBe(true)
+		expect(pool.query.mock.calls[0][0]).toMatch(/c\.category/)
+	})
+
+	test('deck_violation explains the other failures too', async () => {
+		expect(await deck_violation(USER, makeDeck(4))).toMatch(
+			/exactly 5 cards/
+		)
+		pool.query.mockResolvedValueOnce([
+			ownedRows(['COMMON', 'COMMON', 'COMMON', 'COMMON']),
+		])
+		expect(await deck_violation(USER, makeDeck())).toMatch(
+			/do not own/
+		)
+		pool.query.mockResolvedValueOnce([
+			ownedRows([
+				'LEGENDARY',
+				'LEGENDARY',
+				'COMMON',
+				'COMMON',
+				'RARE',
+			]),
+		])
+		expect(await deck_violation(USER, makeDeck())).toMatch(
+			/LEGENDARY/
+		)
 	})
 })
 

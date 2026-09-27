@@ -2,6 +2,7 @@ import express from 'express'
 import pool from '../utils/db.js'
 import { distance_meters } from '../utils/geo.js'
 import { canAwardCard, awardCardIfEligible } from '../services/card_award.js'
+import { analyzeMovement } from '../services/movementTrust.js'
 
 const router = express.Router()
 
@@ -32,6 +33,19 @@ function requireAuth(req, res, next) {
 // meters, which would otherwise block every attempt during dev.
 const LOCATION_VERIFICATION_ENABLED =
 	process.env.REQUIRE_LOCATION_VERIFICATION !== 'false'
+
+/**
+ * Canonical form of a typed FILL_BLANK answer: case-insensitive, with
+ * leading/trailing whitespace trimmed and inner runs collapsed to one
+ * space, so " Nelson   MANDELA " matches "Nelson Mandela".
+ */
+export function normalizeAnswer(text) {
+	return String(text ?? '')
+		.normalize('NFKC')
+		.trim()
+		.replace(/\s+/g, ' ')
+		.toLowerCase()
+}
 
 /**
  * Looks up an event's location + radius from the DB. Shared by both routes
@@ -184,11 +198,16 @@ router.get('/event/:eventId', requireAuth, async (req, res) => {
 		const question = questions[0]
 
 		// Fetch every answer choice for that specific question. Note: no
-		// is_correct here, see comment above the route.
-		const [options] = await pool.query(
-			`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
-			[question.question_id]
-		)
+		// is_correct here, see comment above the route. FILL_BLANK stores
+		// its accepted answer(s) as options, so those are never sent — the
+		// player types the answer and /submit grades the text.
+		let options = []
+		if (question.format !== 'FILL_BLANK') {
+			;[options] = await pool.query(
+				`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
+				[question.question_id]
+			)
+		}
 
 		// User story 8 — tell the frontend up front whether this player
 		// has ALREADY earned this event's card, so it can show a
@@ -232,7 +251,7 @@ router.get('/event/:eventId', requireAuth, async (req, res) => {
 			body: question.body, // the actual question text
 			format: question.format, // e.g. MULTIPLE_CHOICE, TRUE_FALSE
 			time_limit_s: question.time_limit_s,
-			options: options, // array of { option_id, body }
+			options: options, // array of { option_id, body }; [] for FILL_BLANK
 			card_eligibility: {
 				// user story 8 — once-only card banner
 				already_earned, // true = this player has won this event before
@@ -274,6 +293,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 		event_id,
 		question_id,
 		selected_option_id,
+		answer_text,
 		answer_time_ms,
 		claimed_lat,
 		claimed_lng,
@@ -281,6 +301,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 	} = req.body
 	const user_id = req.session.user.user_id // comes from the session cookie, not the request body — a player can't spoof this to submit as someone else
 	const timedOut = !!clientTimedOut
+	const hasAnswerText =
+		typeof answer_text === 'string' &&
+		normalizeAnswer(answer_text) !== ''
 
 	if (!question_id) {
 		return res
@@ -288,8 +311,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 			.json({ error: 'question_id is required' })
 	}
 	// Timeout submissions carry no selection — the countdown hit zero before
-	// the player picked anything. Everything else needs an option_id to grade.
-	if (!timedOut && !selected_option_id) {
+	// the player picked anything. Everything else needs an option_id (or,
+	// for FILL_BLANK, typed answer_text) to grade.
+	if (!timedOut && !selected_option_id && !hasAnswerText) {
 		return res
 			.status(400)
 			.json({ error: 'selected_option_id is required' })
@@ -299,15 +323,26 @@ router.post('/submit', requireAuth, async (req, res) => {
 		// STEP 1: Fetch the question's time_limit_s up front — needed for
 		// authoritative elapsed, timeout detection, points decay, and the
 		// speed-bracket card award regardless of whether the player answered
-		// or timed out.
+		// or timed out. format decides how STEP 3 grades.
 		const [questionRows] = await pool.query(
-			`SELECT time_limit_s FROM trivia_questions WHERE question_id = ?`,
+			`SELECT time_limit_s, format FROM trivia_questions WHERE question_id = ?`,
 			[question_id]
 		)
 		if (!questionRows.length) {
 			return res
 				.status(404)
 				.json({ error: 'Unknown question_id' })
+		}
+		const isFillBlank = questionRows[0].format === 'FILL_BLANK'
+		if (!timedOut && isFillBlank && !hasAnswerText) {
+			return res.status(400).json({
+				error: 'answer_text is required for a fill-in-the-blank question',
+			})
+		}
+		if (!timedOut && !isFillBlank && !selected_option_id) {
+			return res.status(400).json({
+				error: 'selected_option_id is required',
+			})
 		}
 		const time_limit_s = questionRows[0].time_limit_s || 30
 		const time_limit_ms = time_limit_s * 1000
@@ -362,7 +397,18 @@ router.post('/submit', requireAuth, async (req, res) => {
 		// option_id AND question_id together, so submitting an option_id
 		// from a different question still 404s instead of grading.
 		let isCorrect = false
-		if (!timedOutFinal) {
+		if (!timedOutFinal && isFillBlank) {
+			// FILL_BLANK: the accepted answer(s) are the question's
+			// is_correct options. Compare ignoring case and whitespace.
+			const [accepted] = await pool.query(
+				`SELECT body FROM trivia_options WHERE question_id = ? AND is_correct = 1`,
+				[question_id]
+			)
+			const given = normalizeAnswer(answer_text)
+			isCorrect = accepted.some(
+				(o) => normalizeAnswer(o.body) === given
+			)
+		} else if (!timedOutFinal) {
 			const [options] = await pool.query(
 				`SELECT is_correct FROM trivia_options WHERE option_id = ? AND question_id = ?`,
 				[selected_option_id, question_id]
@@ -434,10 +480,12 @@ router.post('/submit', requireAuth, async (req, res) => {
 				parseFloat(event.latitude),
 				parseFloat(event.longitude)
 			)
+			// 'FAILED' (not 'REJECTED') — must be a value of the
+			// location_check_log.status ENUM, or the insert errors.
 			locationStatus =
 				distance <= event.radius_meters
 					? 'VERIFIED'
-					: 'REJECTED'
+					: 'FAILED'
 		}
 
 		const locationVerified =
@@ -484,11 +532,22 @@ router.post('/submit', requireAuth, async (req, res) => {
 		try {
 			await conn.beginTransaction()
 
-			// 8a. Log the location check with REAL values (replaces the old
-			// hardcoded 0, 0, 0, 'VERIFIED').
+			// 8a. Movement trust check (Sprint 2 anti-cheat v1): compare
+			// against the player's previous verified check. FLAG ONLY — the
+			// result is stored for moderators and never changes the status,
+			// points or card outcome of this attempt.
+			const movement = await analyzeMovement(
+				conn,
+				user_id,
+				parseFloat(claimed_lat),
+				parseFloat(claimed_lng)
+			)
+
+			// Log the location check with REAL values, plus the movement
+			// trust result.
 			const [locCheck] = await conn.query(
-				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status, prev_check_id, travel_speed_ms, movement_flagged)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					user_id,
 					event_id,
@@ -498,6 +557,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 						? Math.round(distance)
 						: 0,
 					locationStatus,
+					movement.prevCheckId,
+					movement.travelSpeedMps,
+					movement.isSuspicious,
 				]
 			)
 

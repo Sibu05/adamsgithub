@@ -3,14 +3,11 @@
 // own tab visibility (console.js doesn't know this tab exists) and talks
 // only to /api/placement/*.
 import { API_BASE } from './constants.js'
-import { showToast, esc } from './utils.js'
+import { showToast, esc, formatDT } from './utils.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
-	CAMPUS_MIN_ZOOM,
 	CAMPUS_MAX_ZOOM,
-	CAMPUS_MIN_PITCH,
-	CAMPUS_MAX_PITCH,
 } from './campus-style.js'
 
 const PLACEMENT_API = `${API_BASE}/api/placement`
@@ -22,6 +19,10 @@ const ZONE_COLOR_WINDOW_MS = 3 * 60 * 60 * 1000 // 3 hours
 
 const EMPTY_FC = { type: 'FeatureCollection', features: [] }
 
+// Placement map camera: whole-campus overview (see ensureMap).
+const OVERVIEW_ZOOM = 15.5
+const OVERVIEW_MIN_ZOOM = 13
+
 // ── DOM refs ──────────────────────────────────────────────────
 const tabButtons = document.querySelectorAll('.tab-btn')
 const tabPlacement = document.getElementById('tab-placement')
@@ -31,6 +32,7 @@ const elConfigList = document.getElementById('placement-config-list')
 const elEventsList = document.getElementById('placement-events-list')
 const elRunsBody = document.getElementById('placement-runs-body')
 const elActionMsg = document.getElementById('placement-action-msg')
+const elQuestionWarning = document.getElementById('placement-question-warning')
 const btnGenerate = document.getElementById('btn-placement-generate')
 const btnRotate = document.getElementById('btn-placement-rotate')
 
@@ -43,11 +45,34 @@ let hasLoadedOnce = false
 
 // ── Pure helpers (exported for tests) ────────────────────────────
 
+/**
+ * DATETIME from the API as a Date. The API sends ISO strings with a zone
+ * ("2026-09-27T11:13:00.000Z") because mysql2 returns Date objects; bare
+ * SQL strings ("2026-09-27 11:13:00") are UTC too. Appending 'Z' to an
+ * ISO string (the old approach) gave "…ZZ" → Invalid Date.
+ * Returns null for empty/unparseable input.
+ */
+export function parseApiDate(value) {
+	if (value == null || value === '') return null
+	if (value instanceof Date) return isNaN(value) ? null : value
+	const s = String(value).trim()
+	const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(s)
+	const d = new Date(hasZone ? s : s.replace(' ', 'T') + 'Z')
+	return isNaN(d) ? null : d
+}
+
+/** Started-column text for a placement run, e.g. "27 Sept 2026, 13:13". */
+export function formatRunStarted(value) {
+	const d = parseApiDate(value)
+	return d ? formatDT(d.toISOString()) : '—'
+}
+
 /** "37m left" / "1h 4m left" / "Expiring" / "—" for an ISO/SQL datetime. */
 export function formatTimeLeft(endsAt, now = new Date()) {
-	if (!endsAt) return '—'
-	const end = new Date(endsAt.replace(' ', 'T') + 'Z')
-	if (isNaN(end)) return '—'
+	// parseApiDate: the API sends ISO strings ("...Z"); the old
+	// replace(' ', 'T') + 'Z' turned them into "...ZZ" → always "—".
+	const end = parseApiDate(endsAt)
+	if (!end) return '—'
 	const diffMs = end.getTime() - now.getTime()
 	if (diffMs <= 0) return 'Expiring'
 	const mins = Math.round(diffMs / 60000)
@@ -111,6 +136,61 @@ function badgeForStatus(status) {
 	return `<span class="meta-pill ${cls}">${esc(status)}</span>`
 }
 
+/**
+ * Plain-English result of a Generate / Rotate now click.
+ * `kind` is 'generate' or 'rotate'; `config` is the placement config
+ * (for maxLive / spacing when explaining a short batch).
+ */
+export function describePlacementResult(data, kind, config = {}) {
+	if (data?.skipped)
+		return 'Another rotation is already running — try again in a moment.'
+	if (data?.status === 'FAILED')
+		return `Rotation failed: ${data.error || 'unknown error'}`
+	if (data?.status === 'SKIPPED')
+		return data.error || 'Skipped — no pop-ups were created.'
+
+	const created = data?.createdCount ?? 0
+	const retired = data?.retiredCount ?? 0
+	const cap = data?.maxLive ?? config.maxLive
+	const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
+	const shortNote =
+		cap != null && created < cap
+			? ` Only ${created} of ${cap} fit — new pop-ups must stay ${config.minSpacingMeters ?? 80} m apart on walkable paths and away from the last few batches (cooldown).`
+			: ''
+
+	if (kind === 'rotate')
+		return (
+			`Rotated: retired ${plural(retired, 'live pop-up')} and placed ${plural(created, 'new one')}.` +
+			shortNote
+		)
+	if (created === 0)
+		return `Nothing to add — already at the cap (${cap ?? '?'} live). Use Rotate now to replace them.`
+	return `Generated ${plural(created, 'new pop-up')}.`
+}
+
+/**
+ * [[west, south], [east, north]] around every live pop-up, or around the
+ * whole path graph when there are none (never an empty/blank view).
+ * Returns null if there's nothing to fit.
+ */
+export function placementBounds(activeEvents = [], graph = null) {
+	let pts = activeEvents
+		.map((ev) => [Number(ev.longitude), Number(ev.latitude)])
+		.filter(
+			([lng, lat]) =>
+				Number.isFinite(lng) && Number.isFinite(lat)
+		)
+	if (!pts.length && graph?.nodes?.length)
+		pts = graph.nodes.map((n) => [n.lng, n.lat])
+	if (!pts.length) return null
+	const lngs = pts.map((p) => p[0])
+	const lats = pts.map((p) => p[1])
+	return [
+		[Math.min(...lngs), Math.min(...lats)],
+		[Math.max(...lngs), Math.max(...lats)],
+	]
+}
+
 // ── Side panel rendering (pure DOM writes — no map involved) ────
 
 export function renderLiveCount(activeEvents, config) {
@@ -118,7 +198,22 @@ export function renderLiveCount(activeEvents, config) {
 	elLiveCount.textContent = `${activeEvents.length} / ${config?.maxLive ?? '—'}`
 }
 
-export function renderConfig(config) {
+/**
+ * Warn on the tab itself when there aren't enough Wits-campus questions
+ * for a pop-up (the run would be SKIPPED) — not only in the server log.
+ */
+export function renderQuestionPool(pool) {
+	if (!elQuestionWarning) return
+	if (!pool || pool.enough) {
+		elQuestionWarning.classList.add('hidden')
+		elQuestionWarning.textContent = ''
+		return
+	}
+	elQuestionWarning.textContent = `⚠ ${pool.message}`
+	elQuestionWarning.classList.remove('hidden')
+}
+
+export function renderConfig(config, pool = null) {
 	if (!elConfigList || !config) return
 	const rows = [
 		['Min spacing', `${config.minSpacingMeters} m`],
@@ -127,6 +222,14 @@ export function renderConfig(config) {
 		['Rotation interval', `${config.rotationIntervalMinutes} min`],
 		['Radius', `${config.radiusMeters} m`],
 		['Cooldown rotations', config.cooldownRotations],
+		...(pool
+			? [
+					[
+						'Wits questions',
+						`${pool.witsQuestions} (${pool.perPopup} per pop-up)`,
+					],
+				]
+			: []),
 	]
 	elConfigList.innerHTML = rows
 		.map(
@@ -165,8 +268,12 @@ export function renderRuns(runs) {
 		.map(
 			(r) => `<tr>
 				<td style="padding:0.3rem 0">#${r.run_id}</td>
-				<td style="padding:0.3rem 0">${esc(new Date(r.started_at.replace(' ', 'T') + 'Z').toLocaleString())}</td>
-				<td style="padding:0.3rem 0">${badgeForStatus(r.status)}</td>
+				<td style="padding:0.3rem 0">${esc(formatRunStarted(r.started_at))}</td>
+				<td style="padding:0.3rem 0" title="${esc(r.error ?? '')}">${badgeForStatus(r.status)}${
+					r.status !== 'SUCCESS' && r.error
+						? `<span class="placement-run-error">${esc(r.error)}</span>`
+						: ''
+				}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.retired_count}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.created_count}</td>
 			</tr>`
@@ -176,7 +283,8 @@ export function renderRuns(runs) {
 
 function renderSidePanel(status) {
 	renderLiveCount(status.activeEvents, status.config)
-	renderConfig(status.config)
+	renderConfig(status.config, status.questionPool)
+	renderQuestionPool(status.questionPool)
 	renderEventsList(status.activeEvents)
 	renderRuns(status.recentRuns)
 }
@@ -191,13 +299,17 @@ function ensureMap() {
 		container: 'placement-map',
 		style: createCampusStyle(),
 		center: CAMPUS_CAMERA.center,
-		zoom: Math.max(CAMPUS_MIN_ZOOM, CAMPUS_CAMERA.zoom - 2),
+		zoom: OVERVIEW_ZOOM,
 		pitch: 0,
 		bearing: 0,
-		minZoom: CAMPUS_MIN_ZOOM,
+		// An author's top-down overview, not the player's street-level
+		// camera: the player limits (minZoom 17, minPitch 55) clamped
+		// this map too, so it could never zoom out to frame all pop-ups
+		// (~zoom 15) and was always tilted.
+		minZoom: OVERVIEW_MIN_ZOOM,
 		maxZoom: CAMPUS_MAX_ZOOM,
-		minPitch: CAMPUS_MIN_PITCH,
-		maxPitch: CAMPUS_MAX_PITCH,
+		minPitch: 0,
+		maxPitch: 60,
 		// The base tiles are CartoDB-hosted but OSM-derived, and — once
 		// fetch_osm_paths.js has been run — the path graph, zones and
 		// walkway data drawn on top are OSM data directly. Set explicitly
@@ -428,6 +540,20 @@ function renderEventMarkers(activeEvents) {
 	})
 }
 
+// Frame every live pop-up (or the whole graph if there are none).
+// Called when the tab opens and after each load (initial / after Generate
+// or Rotate now), so the map never opens on an empty corner of campus.
+function fitToPopups(status, { animate = true } = {}) {
+	if (!mapReady || !status) return
+	const bounds = placementBounds(status.activeEvents, status.graph)
+	if (!bounds) return
+	map.fitBounds(bounds, {
+		padding: 48,
+		maxZoom: 17.5,
+		duration: animate ? 600 : 0,
+	})
+}
+
 function renderMapData(status) {
 	ensureMap()
 	if (!mapReady) return // 'load' handler re-calls this once ready
@@ -438,6 +564,7 @@ function renderMapData(status) {
 		(status.config?.minSpacingMeters ?? 80) / 2
 	)
 	renderEventMarkers(status.activeEvents)
+	fitToPopups(status)
 }
 
 // ── Data loading ──────────────────────────────────────────────
@@ -461,7 +588,7 @@ export async function loadPlacementStatus() {
 	}
 }
 
-async function runAction(url, btn, busyLabel, successLabel) {
+async function runAction(url, btn, busyLabel, kind) {
 	if (!btn) return
 	const otherBtn = btn === btnGenerate ? btnRotate : btnGenerate
 	const originalLabel = btn.textContent
@@ -479,14 +606,14 @@ async function runAction(url, btn, busyLabel, successLabel) {
 		if (!res.ok)
 			throw new Error(data.error || `Server ${res.status}`)
 
-		const created = data.createdCount ?? 0
-		const retired = data.retiredCount
-		const summary =
-			retired != null
-				? `${successLabel}: retired ${retired}, created ${created}`
-				: `${successLabel}: created ${created}`
-		setActionMsg(summary, 'success')
-		showToast(summary, 'success')
+		const summary = describePlacementResult(
+			data,
+			kind,
+			latestStatus?.config
+		)
+		const ok = !data.skipped && data.status !== 'FAILED'
+		setActionMsg(summary, ok ? 'success' : 'error')
+		showToast(summary, ok ? 'success' : 'error')
 
 		await loadPlacementStatus()
 	} catch (err) {
@@ -517,11 +644,11 @@ btnGenerate?.addEventListener('click', () =>
 		`${PLACEMENT_API}/generate`,
 		btnGenerate,
 		'Generating…',
-		'Generated'
+		'generate'
 	)
 )
 btnRotate?.addEventListener('click', () =>
-	runAction(`${PLACEMENT_API}/rotate`, btnRotate, 'Rotating…', 'Rotated')
+	runAction(`${PLACEMENT_API}/rotate`, btnRotate, 'Rotating…', 'rotate')
 )
 
 // ── Tab visibility (self-managed — console.js doesn't know this tab
@@ -538,6 +665,7 @@ tabButtons.forEach((btn) => {
 				// Map was created but MapLibre needs a resize nudge after
 				// being shown from a display:none container.
 				map.resize()
+				fitToPopups(latestStatus, { animate: false })
 			}
 		} else {
 			tabPlacement?.classList.add('hidden')

@@ -32,7 +32,7 @@
 				</a>
 				<nav class="header-nav" id="header-nav">
 					<a
-						href="events.html"
+						href="/"
 						class="nav-link hidden"
 						id="nav-events"
 					>
@@ -398,6 +398,22 @@
 									</option>
 								</select>
 							</div>
+							<label
+								class="toolbar-toggle"
+								for="toggle-past-popups"
+								title="Pop-ups the rotation job has retired or archived. Hidden by default; still stored for history and analytics."
+							>
+								<input
+									type="checkbox"
+									id="toggle-past-popups"
+								/>
+								Show past
+								pop-ups
+								<span
+									class="section-count"
+									id="past-popups-count"
+								></span>
+							</label>
 						</div>
 
 						<div id="event-list"></div>
@@ -973,7 +989,7 @@
 														id="q-correct"
 														type="text"
 														list="q-option-list"
-														placeholder="For true/false use 'true' or 'false'"
+														placeholder="Type one of the options above exactly"
 													/>
 													<datalist
 														id="q-option-list"
@@ -2126,14 +2142,7 @@
 						</p>
 					</div>
 
-					<div
-						style="
-							display: grid;
-							grid-template-columns: 1fr 340px;
-							gap: 1.5rem;
-							align-items: start;
-						"
-					>
+					<div class="placement-layout">
 						<div
 							class="form-card"
 							style="padding: 0"
@@ -2150,12 +2159,7 @@
 							></div>
 						</div>
 
-						<div
-							style="
-								display: grid;
-								gap: 1rem;
-							"
-						>
+						<div class="placement-side">
 							<div class="form-card">
 								<h2
 									class="page-title"
@@ -2214,6 +2218,11 @@
 											0;
 										font-size: 0.8rem;
 									"
+								></p>
+								<p
+									id="placement-question-warning"
+									class="placement-warning hidden"
+									role="alert"
 								></p>
 							</div>
 

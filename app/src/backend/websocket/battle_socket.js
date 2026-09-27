@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws'
 import pool from '../utils/db.js'
 import {
 	BATTLE_DECK_NO_CARDS,
-	valid_user_cards,
+	deck_violation,
 	get_active_battle,
 } from '../utils/battle.js'
 import {
@@ -175,9 +175,9 @@ export async function save_player_deck(battle_id, user, deck) {
 		)
 	}
 
-	const is_valid = await valid_user_cards(user, deck)
-	if (!is_valid) {
-		throw new Error('Invalid card selection')
+	const violation = await deck_violation(user, deck)
+	if (violation) {
+		throw new Error(`Invalid card selection: ${violation}`)
 	}
 
 	const values = []

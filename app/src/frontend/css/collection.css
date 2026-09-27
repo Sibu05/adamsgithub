@@ -188,3 +188,30 @@
 	padding: 0.1rem 0.35rem;
 	font-size: 0.8rem;
 }
+
+/* I8: sell a duplicate for points — own row under the date / ×N badge. */
+.cc-footer:has(.cc-sell-btn) {
+	flex-wrap: wrap;
+	row-gap: 0.4rem;
+}
+
+.cc-sell-btn {
+	flex-basis: 100%;
+	padding: 0.35rem 0.5rem;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #fff;
+	background: var(--accent, #0c2461);
+	border: 1px solid transparent;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.cc-sell-btn:hover:not(:disabled) {
+	background: var(--accent-light, #1e3799);
+}
+
+.cc-sell-btn:disabled {
+	opacity: 0.6;
+	cursor: wait;
+}

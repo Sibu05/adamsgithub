@@ -7,7 +7,11 @@ import {
 	createProceduralEvents,
 	loadZoneLastUsed,
 	campusGraph,
+	countEligibleQuestions,
+	notEnoughQuestionsMessage,
+	QUESTIONS_PER_POPUP,
 } from '../placement/rotation_job.js'
+import { WITS_QUESTION_MAX_DISTANCE_M } from '../placement/placement.js'
 
 const router = express.Router()
 
@@ -79,8 +83,25 @@ router.get('/status', requireAuth, requireEventAuthor, async (req, res) => {
 			  LIMIT 10`
 		)
 
+		// Shown on the Placement tab so a shortage is visible up front,
+		// not only in the server log / a skipped run.
+		const witsQuestions = await countEligibleQuestions(pool)
+		const questionPool = {
+			witsQuestions,
+			perPopup: QUESTIONS_PER_POPUP,
+			maxDistanceMeters: WITS_QUESTION_MAX_DISTANCE_M,
+			enough: witsQuestions >= QUESTIONS_PER_POPUP,
+			message:
+				witsQuestions >= QUESTIONS_PER_POPUP
+					? null
+					: notEnoughQuestionsMessage(
+							witsQuestions
+						),
+		}
+
 		res.json({
 			config: DEFAULT_CONFIG,
+			questionPool,
 			activeEvents,
 			graph: {
 				nodes: campusGraph.nodes,
@@ -111,13 +132,15 @@ router.post('/generate', requireAuth, requireEventAuthor, async (req, res) => {
 
 /**
  * POST /api/placement/rotate
- * Runs a full rotation (retire expired + fill back up) immediately, via
- * the same runRotation the scheduled job calls — bypasses the "is it due
- * yet" check, so a rotation can be demoed on demand.
+ * Forced rotation for demos: retires EVERY live pop-up (not just expired
+ * ones) and places a fresh batch right away, via the same runRotation
+ * the scheduled job calls — so spacing, walkable paths, the cap and the
+ * cooldown (new spots keep clear of recent ones) all still apply. The
+ * 15-min scheduler never forces; it only replaces expired pop-ups.
  */
 router.post('/rotate', requireAuth, requireEventAuthor, async (req, res) => {
 	try {
-		const result = await runRotation(pool, {})
+		const result = await runRotation(pool, { force: true })
 		res.json(result)
 	} catch (err) {
 		res.status(500).json({ error: err.message })

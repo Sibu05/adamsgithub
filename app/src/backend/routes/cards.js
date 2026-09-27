@@ -26,10 +26,10 @@ function requireAuth(req, res, next) {
 router.post('/valid-cards', requireAuth, async (req, res) => {
 	try {
 		var deck = req.body
-		if (deck.length != 5) success(res, false)
+		if (deck.length != 5) return success(res, false)
 		if (!(await valid_user_cards(req.user, deck)))
-			success(res, false)
-		success(res, true)
+			return success(res, false)
+		return success(res, true)
 	} catch (err) {
 		console.error(err)
 		error(res, 500, err.message)
@@ -141,7 +141,14 @@ router.get('/collection/mine', requireAuth, async (req, res) => {
 			ORDER BY c.category, c.rarity, c.name`,
 			[req.user.user_id]
 		)
-		res.json(rows)
+		// sell_value: points for selling ONE duplicate (POST /sell), so
+		// the collection page shows the same price the server pays.
+		res.json(
+			rows.map((row) => ({
+				...row,
+				sell_value: RARITY_POINTS[row.rarity] || 0,
+			}))
+		)
 	} catch (err) {
 		res.status(500).json({ error: err.message })
 	}
@@ -371,6 +378,11 @@ router.post('/sell', requireAuth, async (req, res) => {
 			[user_id, pointsEarned, card_id]
 		)
 
+		const [[balance]] = await conn.query(
+			'SELECT points FROM users WHERE user_id = ?',
+			[user_id]
+		)
+
 		await conn.commit()
 
 		res.json({
@@ -379,6 +391,7 @@ router.post('/sell', requireAuth, async (req, res) => {
 			quantity_sold: quantity,
 			points_earned: pointsEarned,
 			remaining_quantity: owned.quantity - quantity,
+			points_total: balance?.points ?? null,
 		})
 	} catch (err) {
 		await conn.rollback()

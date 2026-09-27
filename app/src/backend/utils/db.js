@@ -36,6 +36,11 @@ const pool = mysql.createPool({
 	password: process.env.DB_PASSWORD || 'test',
 	database: process.env.DB_NAME || 'testdb',
 	ssl: sslConfig(),
+	// Every DATETIME column holds UTC (NOW()/UTC_TIMESTAMP() on a UTC DB
+	// server, toUtcDatetime() in events/campaigns, toMysqlDatetime() in
+	// placement). Without this, mysql2 reads them back as the app
+	// server's LOCAL time, which is off by 2 h on a SAST laptop.
+	timezone: 'Z',
 	waitForConnections: true,
 	connectionLimit: 10,
 	queueLimit: 0,

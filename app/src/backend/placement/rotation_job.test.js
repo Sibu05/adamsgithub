@@ -4,10 +4,12 @@ import {
 	retireExpiredEvents,
 	resolveAuthorId,
 	pickPopupQuestions,
+	countEligibleQuestions,
 	pickPopupCards,
 	isRotationDue,
 	maybeRunRotation,
 	startRotationScheduler,
+	loadZoneLastUsed,
 } from './rotation_job.js'
 import { createRng, DEFAULT_CONFIG } from './placement.js'
 import { FIXTURE_GRAPH } from './test_fixtures.js'
@@ -97,10 +99,12 @@ function eligibleQuestionRows(triviaQuestions, sql, params) {
 				!sql.includes('format IN (?)') ||
 				params[0].includes(q.format)
 		)
-		.map(({ question_id, format, body }) => ({
+		.map(({ question_id, format, body, latitude, longitude }) => ({
 			question_id,
 			format,
 			body,
+			latitude,
+			longitude,
 		}))
 }
 
@@ -115,6 +119,11 @@ function optionRowsFor(triviaQuestions, questionIds) {
 		)
 }
 
+// On FIXTURE_GRAPH node n1, i.e. "on Wits campus" for these tests.
+const ON_CAMPUS = { latitude: '-26.19500000', longitude: '28.01900000' }
+// ~1.5 km south of the fixture graph (Gold Reef City-ish).
+const OFF_CAMPUS = { latitude: '-26.20800000', longitude: '28.01900000' }
+
 let nextFakeQuestionId = 1
 function fakeQuestion(body, overrides = {}) {
 	return {
@@ -123,6 +132,7 @@ function fakeQuestion(body, overrides = {}) {
 		body,
 		curation_status: 'PUBLISHED',
 		is_procedural: false,
+		...ON_CAMPUS,
 		options: [
 			{ body: `${body} (right)`, is_correct: true },
 			{ body: `${body} (wrong)`, is_correct: false },
@@ -134,7 +144,10 @@ function fakeQuestion(body, overrides = {}) {
 const SEEDS = Array.from({ length: 25 }, (_, i) => i + 1)
 
 async function pickTexts(db, seed) {
-	const picks = await pickPopupQuestions(db, { rng: createRng(seed) })
+	const picks = await pickPopupQuestions(db, {
+		rng: createRng(seed),
+		graph: FIXTURE_GRAPH,
+	})
 	return picks.map((q) => q.text)
 }
 
@@ -145,8 +158,12 @@ function makeDb({
 	recentSpots = [],
 	zoneLastUsed = [],
 	// Existing questions in the fake DB: [{question_id, format, body,
-	// curation_status, is_procedural, options: [{body, is_correct}]}].
-	triviaQuestions = [],
+	// curation_status, is_procedural, latitude, longitude,
+	// options: [{body, is_correct}]}]. Defaults to a few Wits-campus
+	// questions so rotations have something to copy.
+	triviaQuestions = ['wits q1', 'wits q2', 'wits q3', 'wits q4'].map(
+		(b) => fakeQuestion(b)
+	),
 	cards = [
 		{ card_id: 1, rarity: 'COMMON' },
 		{ card_id: 2, rarity: 'UNCOMMON' },
@@ -314,6 +331,133 @@ describe('retireExpiredEvents', () => {
 		expect(sql).toMatch(/retired_at = \?/)
 		expect(sql).toMatch(/is_procedural = TRUE/)
 		expect(params).toHaveLength(2)
+		expect(sql).toMatch(/ends_at <= \?/)
+	})
+
+	test('all: retires EVERY live pop-up, whatever its TTL (forced rotation)', async () => {
+		const db = makeDb({ retiredAffectedRows: 12 })
+		const count = await retireExpiredEvents(db, {
+			now: new Date(2000, 0, 1),
+			all: true,
+		})
+		expect(count).toBe(12)
+		const [sql, params] = db.query.mock.calls[0]
+		expect(sql).toMatch(/is_procedural = TRUE AND is_active = TRUE/)
+		expect(sql).not.toMatch(/ends_at/)
+		expect(params).toHaveLength(1)
+	})
+})
+
+describe('runRotation — force', () => {
+	const retireSql = (db) =>
+		db.query.mock.calls
+			.map(([sql]) => sql)
+			.find((sql) => sql.includes('RETIRED'))
+
+	test('force retires all live pop-ups, then refills (same placement rules)', async () => {
+		const db = makeDb({ retiredAffectedRows: 12 })
+		const result = await runRotation(db, {
+			force: true,
+			config: { maxLive: 3 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(retireSql(db)).not.toMatch(/ends_at/)
+		expect(result).toMatchObject({
+			forced: true,
+			retiredCount: 12,
+			status: 'SUCCESS',
+			maxLive: 3,
+		})
+		expect(result.createdCount).toBeGreaterThan(0)
+	})
+
+	test('without force (the scheduled job) only expired pop-ups are retired', async () => {
+		const db = makeDb()
+		const result = await runRotation(db, {
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(retireSql(db)).toMatch(/ends_at <= \?/)
+		expect(result.forced).toBe(false)
+	})
+
+	test('the scheduler tick never forces', async () => {
+		const db = makeDb()
+		await maybeRunRotation(db, DEFAULT_CONFIG)
+		const sql = retireSql(db)
+		if (sql) expect(sql).toMatch(/ends_at <= \?/)
+	})
+})
+
+describe('runRotation — not enough Wits questions', () => {
+	const offCampusOnly = () => [
+		fakeQuestion('Gold Reef City 1', OFF_CAMPUS),
+		fakeQuestion('Gold Reef City 2', OFF_CAMPUS),
+		fakeQuestion('one Wits question'),
+	]
+	const runsInsert = (db) =>
+		db.query.mock.calls.find(([sql]) =>
+			sql.trim().startsWith('INSERT INTO placement_runs')
+		)
+
+	test('scheduled run: creates nothing, SKIPPED, says how many Wits questions exist', async () => {
+		const db = makeDb({ triviaQuestions: offCampusOnly() })
+		const result = await runRotation(db, {
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.status).toBe('SKIPPED')
+		expect(result.createdCount).toBe(0)
+		expect(result.error).toMatch(
+			/^Only 1 Wits-campus question available — each pop-up needs 2\./
+		)
+		// Logged, so the Placement tab's Recent runs shows it too.
+		const [, params] = runsInsert(db)
+		expect(params).toContain('SKIPPED')
+		expect(params.at(-1)).toMatch(/Only 1 Wits-campus question/)
+		// No pop-up transactions were opened (only the lock connection).
+		expect(db.connections).toHaveLength(1)
+	})
+
+	test('forced run leaves live pop-ups in place instead of emptying the map', async () => {
+		const db = makeDb({ triviaQuestions: offCampusOnly() })
+		const result = await runRotation(db, {
+			force: true,
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result).toMatchObject({
+			status: 'SKIPPED',
+			retiredCount: 0,
+			createdCount: 0,
+			witsQuestionCount: 1,
+		})
+		expect(result.error).toMatch(
+			/Live pop-ups were left in place\./
+		)
+		expect(
+			db.query.mock.calls.some(([sql]) =>
+				sql.includes("'RETIRED'")
+			)
+		).toBe(false)
+		expect(runsInsert(db)).toBeDefined()
+	})
+
+	test('zero Wits questions is reported as 0', async () => {
+		const db = makeDb({ triviaQuestions: [] })
+		const result = await runRotation(db, {
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.error).toMatch(
+			/^Only 0 Wits-campus questions available/
+		)
 	})
 })
 
@@ -348,35 +492,75 @@ describe('resolveAuthorId', () => {
 
 describe('pickPopupQuestions', () => {
 	test('avoids questions used by recent pop-up events', async () => {
-		const db = makeDb({
-			recentBodies: [
-				{
-					body: 'In which South African city is the University of the Witwatersrand located?',
-				},
-			],
-		})
-		const picks = await pickPopupQuestions(db, {
-			rng: createRng(1),
-		})
-		expect(picks).toHaveLength(2)
-		expect(
-			picks.some((q) =>
-				q.text.startsWith('In which South African city')
-			)
-		).toBe(false)
+		const db = makeDb({ recentBodies: [{ body: 'wits q1' }] })
+		for (const seed of SEEDS) {
+			const texts = await pickTexts(db, seed)
+			expect(texts).toHaveLength(2)
+			expect(texts).not.toContain('wits q1')
+		}
 	})
 
-	test('falls back to the full pool when too few fresh questions remain', async () => {
-		// Exclude everything by echoing back the whole starter bank as
-		// "recently used" — with < 2 eligible left, it must still return 2.
-		const wholeBank = Array.from({ length: 10 }, (_, i) => ({
-			body: `placeholder ${i}`,
-		}))
-		const db = makeDb({ recentBodies: wholeBank })
-		const picks = await pickPopupQuestions(db, {
-			rng: createRng(2),
+	test('reuses recent Wits questions rather than returning fewer than 2', async () => {
+		const db = makeDb({
+			triviaQuestions: [
+				fakeQuestion('only A'),
+				fakeQuestion('only B'),
+			],
+			recentBodies: [{ body: 'only A' }, { body: 'only B' }],
 		})
-		expect(picks).toHaveLength(2)
+		expect((await pickTexts(db, 1)).sort()).toEqual([
+			'only A',
+			'only B',
+		])
+	})
+})
+
+describe('pickPopupQuestions — Wits campus only', () => {
+	test('never copies questions from events off the Wits path graph', async () => {
+		const db = makeDb({
+			triviaQuestions: [
+				fakeQuestion('Great Hall A'),
+				fakeQuestion('Great Hall B'),
+				fakeQuestion('Gold Reef City', OFF_CAMPUS),
+				fakeQuestion('Constitution Hill', {
+					latitude: '-26.19500000',
+					longitude: '28.06000000',
+				}),
+			],
+		})
+		for (const seed of SEEDS) {
+			expect((await pickTexts(db, seed)).sort()).toEqual([
+				'Great Hall A',
+				'Great Hall B',
+			])
+		}
+	})
+
+	test('no non-Wits fallback: with 1 Wits question it returns just that one', async () => {
+		const db = makeDb({
+			triviaQuestions: [
+				fakeQuestion('lonely Wits question'),
+				fakeQuestion('Joburg trivia', OFF_CAMPUS),
+			],
+		})
+		expect(await pickTexts(db, 1)).toEqual(['lonely Wits question'])
+	})
+
+	test('countEligibleQuestions counts only Wits, published, non-procedural ones', async () => {
+		const db = makeDb({
+			triviaQuestions: [
+				fakeQuestion('wits 1'),
+				fakeQuestion('wits 2'),
+				fakeQuestion('off campus', OFF_CAMPUS),
+				fakeQuestion('draft', {
+					curation_status: 'DRAFT',
+				}),
+				fakeQuestion('pop-up copy', {
+					is_procedural: true,
+				}),
+			],
+		})
+		expect(await countEligibleQuestions(db, FIXTURE_GRAPH)).toBe(2)
 	})
 })
 
@@ -446,61 +630,6 @@ describe('pickPopupQuestions — existing DB questions', () => {
 		}
 	})
 
-	test('does not touch the JSON fallback when the DB has 2+ eligible questions', async () => {
-		const db = makeDb({
-			triviaQuestions: [
-				fakeQuestion('db A'),
-				fakeQuestion('db B'),
-				fakeQuestion('db C'),
-			],
-		})
-		for (const seed of SEEDS) {
-			const picks = await pickPopupQuestions(db, {
-				rng: createRng(seed),
-			})
-			expect(picks).toHaveLength(2)
-			expect(picks.every((q) => q.id.startsWith('db:'))).toBe(
-				true
-			)
-		}
-	})
-
-	test('tops up from popup_questions.json when only 1 eligible DB question exists', async () => {
-		const db = makeDb({
-			triviaQuestions: [
-				fakeQuestion('only one'),
-				fakeQuestion('draft', {
-					curation_status: 'DRAFT',
-				}),
-			],
-		})
-		const picks = await pickPopupQuestions(db, {
-			rng: createRng(1),
-		})
-		expect(picks).toHaveLength(2)
-		expect(picks.map((q) => q.id.split(':')[0]).sort()).toEqual([
-			'db',
-			'json',
-		])
-		expect(picks.some((q) => q.text === 'only one')).toBe(true)
-	})
-
-	test('uses the JSON fallback entirely when the DB has no eligible questions', async () => {
-		const db = makeDb({
-			triviaQuestions: [
-				fakeQuestion('draft', {
-					curation_status: 'DRAFT',
-				}),
-				fakeQuestion('copy', { is_procedural: true }),
-			],
-		})
-		const picks = await pickPopupQuestions(db, {
-			rng: createRng(1),
-		})
-		expect(picks).toHaveLength(2)
-		expect(picks.every((q) => q.id.startsWith('json:'))).toBe(true)
-	})
-
 	test('skips formats and questions it cannot copy faithfully', async () => {
 		const db = makeDb({
 			triviaQuestions: [
@@ -528,9 +657,9 @@ describe('pickPopupQuestions — existing DB questions', () => {
 			],
 		})
 		for (const seed of SEEDS) {
-			const texts = await pickTexts(db, seed)
-			expect(texts).toHaveLength(2)
-			expect(new Set(texts).size).toBe(2)
+			expect(await pickTexts(db, seed)).toEqual([
+				'duplicated',
+			])
 		}
 	})
 
@@ -538,7 +667,10 @@ describe('pickPopupQuestions — existing DB questions', () => {
 		const db = makeDb({
 			triviaQuestions: [fakeQuestion('a'), fakeQuestion('b')],
 		})
-		await pickPopupQuestions(db, { rng: createRng(1) })
+		await pickPopupQuestions(db, {
+			rng: createRng(1),
+			graph: FIXTURE_GRAPH,
+		})
 		for (const [sql] of db.query.mock.calls) {
 			expect(sql).not.toMatch(/is_popup_template/)
 		}
@@ -677,6 +809,48 @@ describe('runRotation — placement', () => {
 		}
 	})
 
+	test('a copied FILL_BLANK keeps its answer as the only (correct) option, so pop-ups grade typed text the same way', async () => {
+		const fill = (body) =>
+			fakeQuestion(body, {
+				format: 'FILL_BLANK',
+				options: [
+					{
+						body: `${body} answer`,
+						is_correct: true,
+					},
+				],
+			})
+		const db = makeDb({ triviaQuestions: [fill('f1'), fill('f2')] })
+		const result = await runRotation(db, {
+			config: { maxLive: 1 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(1)
+
+		const calls = db.connections[1].query.mock.calls
+		const formats = calls
+			.filter(([sql]) =>
+				sql
+					.trim()
+					.startsWith(
+						'INSERT INTO trivia_questions'
+					)
+			)
+			.map(([, params]) => params[1])
+		expect(formats).toEqual(['FILL_BLANK', 'FILL_BLANK'])
+
+		const optionInserts = calls.filter(([sql]) =>
+			sql.trim().startsWith('INSERT INTO trivia_options')
+		)
+		expect(optionInserts).toHaveLength(2)
+		for (const [sql, params] of optionInserts) {
+			expect(sql).toMatch(/TRUE\)/) // is_correct
+			expect(params[1]).toMatch(/^f[12] answer$/)
+		}
+	})
+
 	test('a failed insert rolls back that event and does not fail the run', async () => {
 		const db = makeDb({ failOn: 'INSERT INTO trivia_options' })
 
@@ -737,6 +911,66 @@ describe('runRotation — placement', () => {
 	})
 })
 
+describe('runRotation — pop-up cap', () => {
+	// Well outside FIXTURE_GRAPH, so they never affect spacing.
+	const farAway = (i, is_procedural) => ({
+		event_id: 100 + i,
+		latitude: -26.3,
+		longitude: 28.2 + i * 0.01,
+		is_procedural,
+	})
+
+	test('manual (hand-authored) events do not use up pop-up slots', async () => {
+		const db = makeDb({
+			activeEvents: [0, 1, 2].map((i) => farAway(i, 0)),
+		})
+		const result = await runRotation(db, {
+			config: { maxLive: 2 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(2)
+	})
+
+	test('live pop-ups do count toward maxLive', async () => {
+		const db = makeDb({
+			activeEvents: [0, 1].map((i) => farAway(i, 1)),
+		})
+		const result = await runRotation(db, {
+			config: { maxLive: 2 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(0)
+	})
+})
+
+describe('loadZoneLastUsed', () => {
+	test('tracks the unzoned (NULL) area too, under the key "null"', async () => {
+		const db = {
+			query: jest.fn(async () => [
+				[
+					{
+						placement_zone: 'great_hall',
+						last_used: '2026-01-01T00:00:00Z',
+					},
+					{
+						placement_zone: null,
+						last_used: '2026-01-02T00:00:00Z',
+					},
+				],
+			]),
+		}
+		const map = await loadZoneLastUsed(db)
+		expect(map.great_hall).toBe(Date.parse('2026-01-01T00:00:00Z'))
+		// generatePlacements looks the unzoned group up as zoneLastUsed[null]
+		expect(map[null]).toBe(Date.parse('2026-01-02T00:00:00Z'))
+		expect(db.query.mock.calls[0][0]).not.toMatch(/IS NOT NULL/)
+	})
+})
+
 describe('isRotationDue', () => {
 	test('never run before -> due', async () => {
 		const db = { query: jest.fn(async () => [[]]) }
@@ -775,10 +1009,12 @@ describe('isRotationDue', () => {
 		).toBe(true)
 	})
 
-	test('only ever considers SUCCESS runs', async () => {
+	test('considers SUCCESS and SKIPPED runs (a skipped run retries on the interval, not every tick)', async () => {
 		const db = { query: jest.fn(async () => [[]]) }
 		await isRotationDue(db, { rotationIntervalMinutes: 15 })
-		expect(db.query.mock.calls[0][0]).toMatch(/status = 'SUCCESS'/)
+		expect(db.query.mock.calls[0][0]).toMatch(
+			/status IN \('SUCCESS', 'SKIPPED'\)/
+		)
 	})
 })
 

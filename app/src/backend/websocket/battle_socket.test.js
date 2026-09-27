@@ -96,6 +96,7 @@ function dispatch(sql, params = []) {
 			.map((id) => ({
 				card_id: id,
 				rarity: CATALOGUE[id].rarity,
+				category: CATALOGUE[id].category,
 			}))
 		return [rows]
 	}
