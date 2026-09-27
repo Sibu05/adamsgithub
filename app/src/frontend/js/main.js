@@ -9,6 +9,7 @@ import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
 import { suggestEventOrder } from './graph.js'
 import { redirectAfterLogin, updateAuthNav, logout } from './auth-helpers.js'
+import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
@@ -197,6 +198,7 @@ async function fetchCampusEvents() {
 						parseFloat(event.latitude),
 					],
 					radius_meters: event.radius_meters,
+					ev: event, // raw row: status/range/points badges
 					hasChallenge:
 						event.point_reward > 0 ||
 						event.hasChallenge,
@@ -220,19 +222,75 @@ async function fetchCampusEvents() {
 	return []
 }
 
-function buildPopupContent(buildingData) {
-	const challengeButtonHtml = buildingData.hasChallenge
-		? `<button style="background:#2ecc71; color:white; border:none; padding:8px 12px; border-radius:6px; margin-top:8px; width:100%; font-weight:bold; cursor:pointer;" onclick="handleChallengeAttempt('${buildingData.id}')">⚡ Attempt Challenge</button>`
-		: `<p style="margin-top: 8px; font-size: 0.85rem; color: #666;">No active challenge here.</p>`
+// Popup + sidebar badges come from js/event-status.js (shared with
+// pages/events.html): live/expired, in/out of range, distance/radius,
+// points — and Attempt Challenge only when live AND in range.
+function eventPopupFor(ev) {
+	return eventPopupHTML(ev, eventState(ev, playerCoords), {
+		onCampus: isInsideCampus(playerCoords[0], playerCoords[1]),
+		onAttempt: 'handleChallengeAttempt',
+	})
+}
 
-	return `
-    <div style="padding: 4px; min-width: 180px;">
-      <h3 style="margin: 0 0 4px 0; color: #0c2461; font-size: 1rem;">${buildingData.name}</h3>
-      <p style="margin: 4px 0; font-size: 0.85rem; color: #333;">${buildingData.description}</p>
-      <span style="font-size: 0.75rem; background: #f1f2f6; color: #2c3e50; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${buildingData.campus} &bull; ${buildingData.category}</span>
-      <div>${challengeButtonHtml}</div>
-    </div>
-  `
+function renderEventSidebar(stops) {
+	const list = document.getElementById('sidebar-events')
+	if (!list) return
+	list.innerHTML = ''
+	if (!stops.length) {
+		list.innerHTML =
+			'<div class="sidebar-event sidebar-empty">No live events right now — check back soon.</div>'
+		return
+	}
+	for (const stop of stops) {
+		const card = document.createElement('div')
+		card.className = 'sidebar-event'
+		card.dataset.id = stop.id
+		card.innerHTML = `
+			<div class="sidebar-event-title">${escapeHtml(stop.ev.title)}</div>
+			<div class="sidebar-event-meta"></div>
+		`
+		card.addEventListener('click', () => {
+			followMode = false
+			map.flyTo({
+				center: [stop.lng, stop.lat],
+				zoom: Math.max(map.getZoom(), 18),
+				duration: 600,
+			})
+			if (!stop.popup.isOpen()) stop.marker.togglePopup()
+		})
+		list.appendChild(card)
+	}
+	refreshEventStates()
+}
+
+// Re-evaluate every stop against the player's position and the clock:
+// sidebar badges always, the open popup if there is one.
+function refreshEventStates() {
+	for (const stop of stopMarkers) {
+		const meta = document.querySelector(
+			`#sidebar-events .sidebar-event[data-id="${stop.id}"] .sidebar-event-meta`
+		)
+		if (meta)
+			meta.innerHTML = metaPillsHTML(
+				stop.ev,
+				eventState(stop.ev, playerCoords),
+				{ rangeFirst: true }
+			)
+		if (stop.popup.isOpen())
+			stop.popup.setHTML(eventPopupFor(stop.ev))
+	}
+	document.querySelectorAll('#sidebar-events .sidebar-event').forEach(
+		(card) =>
+			card.classList.toggle(
+				'active',
+				stopMarkers.some(
+					(s) =>
+						String(s.id) ===
+							card.dataset.id &&
+						s.popup.isOpen()
+				)
+			)
+	)
 }
 
 function createBuildingPinElement(building) {
@@ -587,6 +645,7 @@ function movePlayerTo([lng, lat], { center = false, accuracy = 0 } = {}) {
 		setWalking(true)
 		dropCrumb(lng, lat)
 		refreshStopGlow()
+		refreshEventStates()
 	}
 	if (center) {
 		map.easeTo({ center: playerCoords, duration: 400 })
@@ -1340,7 +1399,15 @@ async function initializeApp() {
 						createBuildingPinElement(bld)
 					const popup = new maplibregl.Popup({
 						offset: 25,
-					}).setHTML(buildPopupContent(bld))
+					}).setHTML(eventPopupFor(bld.ev))
+					// Rebuild on open so status/range are current.
+					popup.on('open', () => {
+						popup.setHTML(
+							eventPopupFor(bld.ev)
+						)
+						refreshEventStates()
+					})
+					popup.on('close', refreshEventStates)
 
 					const marker = new maplibregl.Marker({
 						element: pinElement,
@@ -1351,6 +1418,8 @@ async function initializeApp() {
 						.addTo(map)
 					stopMarkers.push({
 						marker,
+						popup,
+						ev: bld.ev,
 						el: pinElement.querySelector(
 							'.pokestop-bob'
 						),
@@ -1361,6 +1430,7 @@ async function initializeApp() {
 					})
 				})
 				applyNextSuggestedMarker()
+				renderEventSidebar(stopMarkers)
 				renderProximityCircles(buildings)
 				refreshStopGlow()
 				refreshFactStops()
@@ -1370,6 +1440,9 @@ async function initializeApp() {
 		}
 		await renderEventPins()
 		setInterval(renderEventPins, 30000)
+		// Pop-ups expire on a timer; keep badges honest between reloads
+		// (renderEventPins skips while a popup is open).
+		setInterval(refreshEventStates, 15000)
 		document.addEventListener('visibilitychange', () => {
 			if (!document.hidden) renderEventPins()
 		})

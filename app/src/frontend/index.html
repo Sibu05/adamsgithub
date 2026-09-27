@@ -16,6 +16,7 @@
 		<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 		<link rel="stylesheet" href="../css/style.css" />
 		<link rel="stylesheet" href="/css/account-menu.css" />
+		<link rel="stylesheet" href="/css/event-panel.css" />
 		<style>
 			* {
 				box-sizing: border-box;
@@ -311,12 +312,34 @@
 				}
 			}
 
-			/* ---- PoGO day HUD: white cards, blue accents ---- */
-			#hud {
-				position: absolute;
+			/* ---- Left rail: #hud + Campus Events list ---- */
+			#map-sidebar {
 				top: 16px;
 				left: 16px;
 				z-index: 5;
+				/* leave room for #legend in the bottom-left corner */
+				max-height: calc(100% - 170px);
+			}
+			.sidebar-events {
+				display: flex;
+				flex-direction: column;
+				gap: 0.5rem;
+			}
+			.sidebar-empty {
+				cursor: default;
+				font-size: 0.8rem;
+				color: var(--text-muted);
+			}
+			@media (max-width: 640px) {
+				#map-sidebar {
+					width: calc(100% - 32px);
+					max-height: 38%;
+				}
+			}
+
+			/* ---- PoGO day HUD: white cards, blue accents ---- */
+			#hud {
+				position: static;
 				background: #ffffff;
 				border: 3px solid #2f9df0;
 				border-radius: 16px;
@@ -1240,13 +1263,46 @@
 				challenges. Browsing the world map.
 			</div>
 
-			<div id="hud">
-				<h1>🗺️ Explore anywhere</h1>
-				<p>
-					The whole world, gamified. Event stops
-					live at Wits — tap one anywhere, but you
-					must be on campus to play.
-				</p>
+			<!-- Left rail: intro card + live event list (shared sidebar
+			     styles/markup with pages/events.html, see event-panel.css
+			     and js/event-status.js). -->
+			<div class="map-sidebar" id="map-sidebar">
+				<div id="hud">
+					<h1>🗺️ Explore anywhere</h1>
+					<p>
+						The whole world, gamified. Event
+						stops live at Wits — tap one
+						anywhere, but you must be on
+						campus to play.
+					</p>
+				</div>
+				<div class="sidebar-header">
+					<span class="nav-ico">
+						<svg
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path
+								d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"
+							/>
+							<circle
+								cx="12"
+								cy="10"
+								r="3"
+							/>
+						</svg>
+					</span>
+					Campus Events
+				</div>
+				<div
+					id="sidebar-events"
+					class="sidebar-events"
+				></div>
 			</div>
 
 			<div id="legend">
