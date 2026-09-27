@@ -26,10 +26,10 @@ function requireAuth(req, res, next) {
 router.post('/valid-cards', requireAuth, async (req, res) => {
 	try {
 		var deck = req.body
-		if (deck.length != 5) success(res, false)
+		if (deck.length != 5) return success(res, false)
 		if (!(await valid_user_cards(req.user, deck)))
-			success(res, false)
-		success(res, true)
+			return success(res, false)
+		return success(res, true)
 	} catch (err) {
 		console.error(err)
 		error(res, 500, err.message)

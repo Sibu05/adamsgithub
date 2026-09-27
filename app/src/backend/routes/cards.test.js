@@ -15,6 +15,7 @@ jest.unstable_mockModule('../utils/rarity_points.js', () => ({
 	},
 }))
 const { default: pool } = await import('../utils/db.js')
+const { valid_user_cards } = await import('../utils/battle.js')
 const { default: cardsRouter } = await import('./cards.js')
 import express from 'express'
 import { createServer } from 'http'
@@ -260,6 +261,57 @@ describe('DELETE /api/cards/:id', () => {
 				method: 'DELETE',
 			})
 			expect(res.status).toBe(200)
+		})
+	})
+})
+
+describe('POST /api/cards/valid-cards', () => {
+	// Used to fall through and send a second response
+	// (ERR_HTTP_HEADERS_SENT) whenever the deck was invalid.
+	let consoleError
+	beforeEach(() => {
+		valid_user_cards.mockReset()
+		consoleError = jest
+			.spyOn(console, 'error')
+			.mockImplementation(() => {})
+	})
+	afterEach(() => consoleError.mockRestore())
+
+	function post(base, deck) {
+		return fetch(`${base}/api/cards/valid-cards`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(deck),
+		})
+	}
+	const deckOf = (n) =>
+		Array.from({ length: n }, (_, i) => ({ card_id: i + 1 }))
+
+	test('wrong deck size -> false, one response, never validates ownership', async () => {
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const res = await post(base, deckOf(3))
+			expect(res.status).toBe(200)
+			expect(await res.json()).toBe(false)
+		})
+		expect(valid_user_cards).not.toHaveBeenCalled()
+		expect(consoleError).not.toHaveBeenCalled()
+	})
+
+	test('rule-breaking deck -> false, one response', async () => {
+		valid_user_cards.mockResolvedValueOnce(false)
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const res = await post(base, deckOf(5))
+			expect(await res.json()).toBe(false)
+		})
+		expect(consoleError).not.toHaveBeenCalled()
+	})
+
+	test('valid deck -> true', async () => {
+		valid_user_cards.mockResolvedValueOnce(true)
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			expect(await (await post(base, deckOf(5))).json()).toBe(
+				true
+			)
 		})
 	})
 })
