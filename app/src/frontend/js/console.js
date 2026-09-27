@@ -232,6 +232,10 @@ tabButtons.forEach((btn) => {
 			tabCampaigns.classList.remove('hidden')
 			if (!elConsole.classList.contains('hidden'))
 				loadCampaigns()
+		} else if (tab === 'placement') {
+			// placement-console.js shows #tab-placement itself; only the
+			// other tabs are hidden here (falling through to the events
+			// branch below used to leave Manage/Edit Event visible too).
 		} else if (tab === 'insights') {
 			tabInsights.classList.remove('hidden')
 			if (!elConsole.classList.contains('hidden')) {
