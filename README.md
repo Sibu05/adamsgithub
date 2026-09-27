@@ -174,7 +174,7 @@ $ npm run db:migrate-auth
    return 500 until they exist. Create them once per database with
    `npm run db:migrate-auth` (`setup.py` does this for you). It uses
    Better Auth's own migration planner, is additive and safe to re-run.
-   On startup the server only *checks* and logs a warning if they're
+   On startup the server only _checks_ and logs a warning if they're
    missing — it never migrates automatically, since that would also
    touch any shared/deployed DB the server points at.
 3. **Bridge middleware** runs on every request: if a Better Auth

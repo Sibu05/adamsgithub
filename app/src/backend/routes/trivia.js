@@ -340,11 +340,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 			})
 		}
 		if (!timedOut && !isFillBlank && !selected_option_id) {
-			return res
-				.status(400)
-				.json({
-					error: 'selected_option_id is required',
-				})
+			return res.status(400).json({
+				error: 'selected_option_id is required',
+			})
 		}
 		const time_limit_s = questionRows[0].time_limit_s || 30
 		const time_limit_ms = time_limit_s * 1000
