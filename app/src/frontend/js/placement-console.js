@@ -3,7 +3,7 @@
 // own tab visibility (console.js doesn't know this tab exists) and talks
 // only to /api/placement/*.
 import { API_BASE } from './constants.js'
-import { showToast, esc } from './utils.js'
+import { showToast, esc, formatDT } from './utils.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
@@ -42,6 +42,28 @@ let currentMarkers = []
 let hasLoadedOnce = false
 
 // ── Pure helpers (exported for tests) ────────────────────────────
+
+/**
+ * DATETIME from the API as a Date. The API sends ISO strings with a zone
+ * ("2026-09-27T11:13:00.000Z") because mysql2 returns Date objects; bare
+ * SQL strings ("2026-09-27 11:13:00") are UTC too. Appending 'Z' to an
+ * ISO string (the old approach) gave "…ZZ" → Invalid Date.
+ * Returns null for empty/unparseable input.
+ */
+export function parseApiDate(value) {
+	if (value == null || value === '') return null
+	if (value instanceof Date) return isNaN(value) ? null : value
+	const s = String(value).trim()
+	const hasZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(s)
+	const d = new Date(hasZone ? s : s.replace(' ', 'T') + 'Z')
+	return isNaN(d) ? null : d
+}
+
+/** Started-column text for a placement run, e.g. "27 Sept 2026, 13:13". */
+export function formatRunStarted(value) {
+	const d = parseApiDate(value)
+	return d ? formatDT(d.toISOString()) : '—'
+}
 
 /** "37m left" / "1h 4m left" / "Expiring" / "—" for an ISO/SQL datetime. */
 export function formatTimeLeft(endsAt, now = new Date()) {
@@ -197,7 +219,7 @@ export function renderRuns(runs) {
 		.map(
 			(r) => `<tr>
 				<td style="padding:0.3rem 0">#${r.run_id}</td>
-				<td style="padding:0.3rem 0">${esc(new Date(r.started_at.replace(' ', 'T') + 'Z').toLocaleString())}</td>
+				<td style="padding:0.3rem 0">${esc(formatRunStarted(r.started_at))}</td>
 				<td style="padding:0.3rem 0">${badgeForStatus(r.status)}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.retired_count}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.created_count}</td>

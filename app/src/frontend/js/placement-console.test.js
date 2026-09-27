@@ -151,6 +151,59 @@ afterEach(() => {
 	jest.restoreAllMocks()
 })
 
+describe('API dates (Recent runs "Started" column)', () => {
+	// The real API sends ISO strings with a Z (mysql2 returns Date
+	// objects); the old parser appended another Z → Invalid Date.
+	const ISO = '2026-09-27T11:13:00.000Z'
+
+	test('parseApiDate accepts ISO (with zone), SQL strings (UTC) and Dates', () => {
+		const expected = Date.parse(ISO)
+		expect(placementConsole.parseApiDate(ISO).getTime()).toBe(
+			expected
+		)
+		expect(
+			placementConsole
+				.parseApiDate('2026-09-27 11:13:00')
+				.getTime()
+		).toBe(expected)
+		expect(
+			placementConsole
+				.parseApiDate('2026-09-27T13:13:00+02:00')
+				.getTime()
+		).toBe(expected)
+		expect(
+			placementConsole.parseApiDate(new Date(ISO)).getTime()
+		).toBe(expected)
+	})
+
+	test('parseApiDate returns null for empty or junk', () => {
+		expect(placementConsole.parseApiDate(null)).toBeNull()
+		expect(placementConsole.parseApiDate('')).toBeNull()
+		expect(placementConsole.parseApiDate('not a date')).toBeNull()
+	})
+
+	test('renderRuns never prints "Invalid Date" for the real API shape', () => {
+		placementConsole.renderRuns([
+			{
+				run_id: 7,
+				started_at: ISO,
+				status: 'SUCCESS',
+				retired_count: 12,
+				created_count: 12,
+			},
+		])
+		const html = document.getElementById(
+			'placement-runs-body'
+		).innerHTML
+		expect(html).not.toMatch(/Invalid Date/)
+		expect(html).toContain('2026')
+	})
+
+	test('formatRunStarted shows — for a missing date', () => {
+		expect(placementConsole.formatRunStarted(null)).toBe('—')
+	})
+})
+
 describe('formatTimeLeft', () => {
 	test('formats minutes left', () => {
 		const now = new Date('2026-01-01T00:00:00Z')
