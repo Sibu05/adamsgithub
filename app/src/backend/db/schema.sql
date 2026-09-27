@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS user_credentials (
     user_id   INT         NOT NULL PRIMARY KEY,
-    pin_hash  VARCHAR(64) NOT NULL,
+    pin_hash  VARCHAR(255) NOT NULL,
     CONSTRAINT fk_ucred_user FOREIGN KEY (user_id) REFERENCES users (user_id)
 );
 -- ============================================================
@@ -400,6 +400,12 @@ CREATE TABLE IF NOT EXISTS event_qr_tokens (
 
     CONSTRAINT fk_qrt_event FOREIGN KEY (event_id) REFERENCES events (event_id) ON DELETE CASCADE
 );
+
+-- PINs are hashed with scrypt ("scrypt$N$r$p$salt$hash", ~115 chars).
+-- Widens pin_hash on databases created when it held a 64-char SHA-256.
+-- Idempotent, and legacy SHA-256 hashes still fit.
+ALTER TABLE user_credentials
+    MODIFY COLUMN pin_hash VARCHAR(255) NOT NULL;
 
 -- Add FALLBACK_QR to location_check_log status ENUM
 ALTER TABLE location_check_log

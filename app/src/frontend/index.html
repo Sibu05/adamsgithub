@@ -1445,8 +1445,11 @@
 						<input
 							type="password"
 							id="drawer-signup-pin"
-							placeholder="PIN"
+							placeholder="PIN (4–6 digits)"
 							required
+							inputmode="numeric"
+							pattern="[0-9]{4,6}"
+							title="4 to 6 digits"
 							autocomplete="new-password"
 						/>
 					</div>
@@ -1456,6 +1459,9 @@
 							id="drawer-signup-pin-confirm"
 							placeholder="Confirm PIN"
 							required
+							inputmode="numeric"
+							pattern="[0-9]{4,6}"
+							title="4 to 6 digits"
 							autocomplete="new-password"
 						/>
 					</div>
