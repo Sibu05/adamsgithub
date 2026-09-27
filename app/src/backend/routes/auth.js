@@ -120,6 +120,15 @@ router.post('/register', async (req, res) => {
 			error: 'name, email, and password/pin are required',
 		})
 	}
+	// The username is stored in users.email, which Google sign-in also
+	// uses. An email-looking username could claim someone else's
+	// address, so new usernames can't contain '@'. (Login still accepts
+	// older accounts that have one.)
+	if (userEmail.includes('@')) {
+		return res.status(400).json({
+			error: "Usernames can't contain '@' — to sign in with an email address, use Google.",
+		})
+	}
 	if (!isValidPin(String(inputPin))) {
 		return res
 			.status(400)

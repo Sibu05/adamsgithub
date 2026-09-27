@@ -262,7 +262,7 @@ describe('POST /api/auth/register', () => {
 			expect(res.status).toBe(400)
 		})
 	})
-	test('400 when email exists', async () => {
+	test('400 when the username is taken', async () => {
 		pool.query.mockResolvedValueOnce([[{ user_id: 1 }]])
 		const app = makeApp({})
 		await withServer(app, async (base) => {
@@ -271,13 +271,41 @@ describe('POST /api/auth/register', () => {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					name: 'A',
-					email: 'a@a.com',
+					email: 'alice',
 					pin: '1234',
 				}),
 			})
 			expect(res.status).toBe(400)
+			expect((await res.json()).error).toMatch(
+				/already registered/
+			)
 		})
 	})
+	test.each(['thandi@gmail.com', 'a@', '@x'])(
+		"400 for username %p: usernames can't contain '@' (Google hijack)",
+		async (username) => {
+			await withServer(makeApp({}), async (base) => {
+				const res = await fetch(
+					`${base}/api/auth/register`,
+					{
+						method: 'POST',
+						headers: {
+							'Content-Type':
+								'application/json',
+						},
+						body: JSON.stringify({
+							name: 'T',
+							email: username,
+							pin: '1234',
+						}),
+					}
+				)
+				expect(res.status).toBe(400)
+				expect((await res.json()).error).toMatch(/@/)
+			})
+			expect(pool.query).not.toHaveBeenCalled()
+		}
+	)
 	test.each(['123', '1234567', 'abcd', '12 34'])(
 		'400 when the PIN %p is not 4–6 digits',
 		async (pin) => {
@@ -344,12 +372,12 @@ describe('POST /api/auth/register', () => {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					name: 'Bob',
-					email: 'bob@a.com',
+					email: 'bob',
 					pin: '1234',
 				}),
 			})
 			expect(res.status).toBe(201)
-			expect(session.user.email).toBe('bob@a.com')
+			expect(session.user.email).toBe('bob')
 		})
 	})
 })

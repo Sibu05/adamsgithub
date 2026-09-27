@@ -828,6 +828,18 @@ async function checkAuthSession() {
 			const user = await res.json()
 			currentUser = user
 			updateAuthNav(user)
+		} else if (res.status === 409) {
+			// Google sign-in refused: the email belongs to a
+			// username + PIN account. Drop the Google session so this
+			// doesn't repeat on every page load, and say why.
+			const { error } = await res.json().catch(() => ({}))
+			await baSignOut()
+			currentUser = null
+			updateAuthNav(null)
+			alert(
+				error ||
+					'Google sign-in was refused for this account.'
+			)
 		} else {
 			// 401 from the backend — no valid session.
 			currentUser = null

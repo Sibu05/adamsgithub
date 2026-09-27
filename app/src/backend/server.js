@@ -47,6 +47,7 @@ import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
 import { startRotationScheduler } from './placement/rotation_job.js'
 import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
+import { resolve_better_auth_user } from './utils/better_auth_sync.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -170,33 +171,20 @@ app.use(async (req, res, next) => {
 			),
 		])
 		if (bSession?.user) {
-			const [users] = await pool.query(
-				'SELECT user_id, name, email, avatar_url, points FROM users WHERE email = ?',
-				[bSession.user.email]
+			// Matched by Google account id, not email alone — see
+			// utils/better_auth_sync.js.
+			const resolved = await resolve_better_auth_user(
+				pool,
+				bSession.user
 			)
-			if (users.length) {
-				req.user = users[0]
+			if (resolved.conflict) {
+				req.auth_conflict = resolved.conflict
 			} else {
-				// First-time Google user — sync into our users table
-				const [result] = await pool.query(
-					`INSERT INTO users (provider_id, email, name, avatar_url, points)
-           VALUES (?, ?, ?, ?, 0)`,
-					[
-						`betterauth:${bSession.user.id}`,
-						bSession.user.email,
-						bSession.user.name,
-						bSession.user.image,
-					]
-				)
-				const [newUsers] = await pool.query(
-					'SELECT user_id, name, email, avatar_url, points FROM users WHERE user_id = ?',
-					[result.insertId]
-				)
-				req.user = newUsers[0]
+				req.user = resolved.user
+				// Keep the express-session cookie in sync so existing code that reads
+				// req.session.user.user_id continues to work for Google-OAuth users.
+				req.session.user = req.user
 			}
-			// Keep the express-session cookie in sync so existing code that reads
-			// req.session.user.user_id continues to work for Google-OAuth users.
-			req.session.user = req.user
 		}
 	} catch (err) {
 		// Silently continue for unauthenticated requests
@@ -249,6 +237,10 @@ app.get('/api/health', async (req, res) => {
 // Get current authenticated user (used by frontend checkAuthSession)
 // ---------------------------------------------------------------------------
 app.get('/api/me', async (req, res) => {
+	if (!req.user?.user_id && req.auth_conflict) {
+		// Google sign-in refused (email belongs to a PIN account).
+		return res.status(409).json({ error: req.auth_conflict })
+	}
 	if (!req.user?.user_id) {
 		return res.status(401).json({ error: 'Not authenticated' })
 	}
