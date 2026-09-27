@@ -957,16 +957,31 @@ function showTriviaModal(eventId, trivia) {
 	// Each button carries its option_id in a data attribute; an event
 	// listener below wires it up so the click handler can compute the
 	// real elapsed time (instead of a hardcoded value).
-	const optionsHtml = trivia.options
-		.map(
-			(opt) => `
+	// FILL_BLANK has no options (the server never sends its answer) — the
+	// player types the answer instead and the server grades the text.
+	const isFillBlank = trivia.format === 'FILL_BLANK'
+	const optionsHtml = isFillBlank
+		? `
+    <form id="trivia-fill-form" style="display: flex; gap: 8px; margin: 8px 0;">
+      <input id="trivia-fill-input" type="text" autocomplete="off" required
+             placeholder="Type your answer" aria-label="Your answer"
+             style="flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #ccc;" />
+      <button type="submit" class="trivia-option-btn"
+              style="padding: 10px 16px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;">
+        Submit
+      </button>
+    </form>
+  `
+		: trivia.options
+				.map(
+					(opt) => `
     <button data-opt-id="${opt.option_id}" class="trivia-option-btn"
             style="display: block; width: 100%; margin: 8px 0; padding: 10px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;">
       ${escapeHtml(opt.body)}
     </button>
   `
-		)
-		.join('')
+				)
+				.join('')
 
 	// If the player has ALREADY earned this event's card, show a clear
 	// banner BEFORE they answer — replay is for practice, no new card.
@@ -998,7 +1013,7 @@ function showTriviaModal(eventId, trivia) {
 	// Wire option buttons via addEventListener — computes elapsed since
 	// the question opened and disables the rest to prevent double-submit.
 	let submitted = false
-	const submit = async (optionId, timedOut) => {
+	const submit = async (optionId, timedOut, answerText = null) => {
 		if (submitted) return
 		submitted = true
 		if (activeTriviaTimer) {
@@ -1016,14 +1031,30 @@ function showTriviaModal(eventId, trivia) {
 			{
 				timed_out: timedOut,
 				elapsed_ms: elapsed,
+				answer_text: answerText,
 			}
 		)
 	}
-	modal.querySelectorAll('.trivia-option-btn').forEach((btn) => {
-		btn.addEventListener('click', () => {
-			submit(Number(btn.dataset.optId), false)
+	if (isFillBlank) {
+		const fillInput = modal.querySelector('#trivia-fill-input')
+		fillInput.focus()
+		modal.querySelector('#trivia-fill-form').addEventListener(
+			'submit',
+			(e) => {
+				e.preventDefault()
+				const text = fillInput.value.trim()
+				if (!text) return
+				fillInput.disabled = true
+				submit(null, false, text)
+			}
+		)
+	} else {
+		modal.querySelectorAll('.trivia-option-btn').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				submit(Number(btn.dataset.optId), false)
+			})
 		})
-	})
+	}
 	modal.querySelector('#trivia-close-btn').addEventListener(
 		'click',
 		() => {
@@ -1069,7 +1100,11 @@ window.submitTriviaAnswer = async function (
 	optionId,
 	opts = {}
 ) {
-	const { timed_out: timedOut = false, elapsed_ms: elapsedMs = 0 } = opts
+	const {
+		timed_out: timedOut = false,
+		elapsed_ms: elapsedMs = 0,
+		answer_text: answerText = null,
+	} = opts
 	const optionsContainer = document.getElementById('trivia-options')
 	const resultContainer = document.getElementById('trivia-result')
 
@@ -1105,7 +1140,8 @@ window.submitTriviaAnswer = async function (
 		answer_time_ms: elapsedMs,
 		timed_out: !!timedOut,
 	}
-	if (!timedOut) body.selected_option_id = optionId
+	if (!timedOut && answerText !== null) body.answer_text = answerText
+	else if (!timedOut) body.selected_option_id = optionId
 	if (lat !== null) body.claimed_lat = lat
 	if (lng !== null) body.claimed_lng = lng
 

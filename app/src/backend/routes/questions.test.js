@@ -68,6 +68,31 @@ describe('GET /api/events/:eventId/questions', () => {
 			expect(body[0].options).toEqual(['A', 'B'])
 		})
 	})
+	test('200 never leaks a FILL_BLANK answer (public route)', async () => {
+		pool.query.mockResolvedValueOnce([
+			[
+				{
+					id: 3,
+					event_id: 1,
+					type: 'FILL_BLANK',
+					text: 'Wits was founded in ____.',
+				},
+			],
+		])
+		// If the route queried trivia_options it would get the answer.
+		pool.query.mockResolvedValue([[{ option_id: 9, body: '1922' }]])
+		const app = makeApp(null)
+		await withServer(app, async (base) => {
+			const res = await fetch(
+				`${base}/api/events/1/questions`
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0].options).toBeNull()
+			expect(JSON.stringify(body)).not.toContain('1922')
+		})
+		expect(pool.query).toHaveBeenCalledTimes(1)
+	})
 	test('200 empty when no questions', async () => {
 		pool.query.mockResolvedValueOnce([[]])
 		const app = makeApp(null)

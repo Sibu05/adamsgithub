@@ -91,8 +91,14 @@ router.get('/events/:eventId/questions', async (req, res) => {
 			[req.params.eventId]
 		)
 
-		// Attach options for each question (without is_correct)
+		// Attach options for each question (without is_correct). A
+		// FILL_BLANK question's only "option" IS its answer, so it's never
+		// sent — this route is public.
 		for (const q of questions) {
+			if (q.type === 'FILL_BLANK') {
+				q.options = null
+				continue
+			}
 			const [options] = await pool.query(
 				`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
 				[q.id]

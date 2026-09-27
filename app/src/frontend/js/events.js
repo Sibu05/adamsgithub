@@ -662,9 +662,26 @@ function showTriviaModal(eventId, trivia) {
 	const timeLimit = trivia.time_limit_s || 30
 	const startTime = Date.now()
 
-	const optionsHtml = trivia.options
-		.map(
-			(opt) => `
+	// FILL_BLANK: no options are sent — the player types the answer.
+	const isFillBlank = trivia.format === 'FILL_BLANK'
+	const fillBlankHtml = `
+		<form id="trivia-fill-form" style="display:flex;gap:8px;margin:6px 0;">
+			<input id="trivia-fill-input" type="text" autocomplete="off" required
+				placeholder="Type your answer" aria-label="Your answer"
+				style="flex:1;padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);
+					background:var(--surface-2);color:var(--text);font-family:var(--font-body);font-size:0.875rem;" />
+			<button type="submit" class="trivia-option-btn"
+				style="padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);
+					background:var(--surface-2);color:var(--text);cursor:pointer;font-family:var(--font-body);">
+				Submit
+			</button>
+		</form>
+	`
+	const optionsHtml = isFillBlank
+		? fillBlankHtml
+		: trivia.options
+				.map(
+					(opt) => `
 		<button data-option-id="${opt.option_id}" class="trivia-option-btn"
 			style="display:block;width:100%;margin:6px 0;padding:10px 14px;
 				border-radius:var(--radius);border:1px solid var(--border);
@@ -676,8 +693,8 @@ function showTriviaModal(eventId, trivia) {
 			${opt.body}
 		</button>
 	`
-		)
-		.join('')
+				)
+				.join('')
 
 	const overlay = document.createElement('div')
 	overlay.id = 'trivia-overlay'
@@ -718,9 +735,34 @@ function showTriviaModal(eventId, trivia) {
 		}
 	)
 
+	overlay.querySelector('#trivia-fill-form')?.addEventListener(
+		'submit',
+		(e) => {
+			e.preventDefault()
+			const input =
+				overlay.querySelector('#trivia-fill-input')
+			const text = input.value.trim()
+			if (!text) return
+			const elapsed = Date.now() - startTime
+			clearInterval(timerInterval)
+			input.disabled = true
+			overlay.querySelectorAll('.trivia-option-btn').forEach(
+				(b) => (b.disabled = true)
+			)
+			window._submitAnswer(
+				eventId,
+				trivia.question_id,
+				null,
+				elapsed,
+				text
+			)
+		}
+	)
+
 	overlay.querySelector('#trivia-options').addEventListener(
 		'click',
 		(e) => {
+			if (isFillBlank) return // handled by the form's submit
 			const btn = e.target.closest('.trivia-option-btn')
 			if (!btn) return
 			const optionId = parseInt(btn.dataset.optionId, 10)
@@ -771,9 +813,10 @@ window._submitAnswer = async function (
 	eventId,
 	questionId,
 	optionId,
-	answerTimeMs
+	answerTimeMs,
+	answerText = null
 ) {
-	if (!optionId) {
+	if (!optionId && !answerText) {
 		document.getElementById('trivia-overlay')?.remove()
 		showResultModal({
 			is_correct: false,
@@ -800,9 +843,10 @@ window._submitAnswer = async function (
 		const body = {
 			event_id: eventId,
 			question_id: questionId,
-			selected_option_id: optionId,
 			answer_time_ms: answerTimeMs ?? 1500,
 		}
+		if (answerText) body.answer_text = answerText
+		else body.selected_option_id = optionId
 		if (lat !== null) body.claimed_lat = lat
 		if (lng !== null) body.claimed_lng = lng
 		const res = await fetch(`${API_BASE}/api/trivia/submit`, {

@@ -678,6 +678,48 @@ describe('runRotation — placement', () => {
 		}
 	})
 
+	test('a copied FILL_BLANK keeps its answer as the only (correct) option, so pop-ups grade typed text the same way', async () => {
+		const fill = (body) =>
+			fakeQuestion(body, {
+				format: 'FILL_BLANK',
+				options: [
+					{
+						body: `${body} answer`,
+						is_correct: true,
+					},
+				],
+			})
+		const db = makeDb({ triviaQuestions: [fill('f1'), fill('f2')] })
+		const result = await runRotation(db, {
+			config: { maxLive: 1 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(1)
+
+		const calls = db.connections[1].query.mock.calls
+		const formats = calls
+			.filter(([sql]) =>
+				sql
+					.trim()
+					.startsWith(
+						'INSERT INTO trivia_questions'
+					)
+			)
+			.map(([, params]) => params[1])
+		expect(formats).toEqual(['FILL_BLANK', 'FILL_BLANK'])
+
+		const optionInserts = calls.filter(([sql]) =>
+			sql.trim().startsWith('INSERT INTO trivia_options')
+		)
+		expect(optionInserts).toHaveLength(2)
+		for (const [sql, params] of optionInserts) {
+			expect(sql).toMatch(/TRUE\)/) // is_correct
+			expect(params[1]).toMatch(/^f[12] answer$/)
+		}
+	})
+
 	test('a failed insert rolls back that event and does not fail the run', async () => {
 		const db = makeDb({ failOn: 'INSERT INTO trivia_options' })
 

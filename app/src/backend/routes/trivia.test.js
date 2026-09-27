@@ -11,7 +11,7 @@ jest.unstable_mockModule('../utils/db.js', () => ({
 }))
 
 const { default: pool } = await import('../utils/db.js')
-const { default: trivia_router } = await import('./trivia.js')
+const { default: trivia_router, normalizeAnswer } = await import('./trivia.js')
 
 import express from 'express'
 import { createServer } from 'http'
@@ -591,6 +591,162 @@ describe('POST /api/trivia/submit', () => {
 			expect(body.is_correct).toBe(false)
 			expect(body.points_awarded).toBe(0)
 			expect(body.correct_option_text).toBe('Pretoria')
+		})
+	})
+})
+
+// ── FILL_BLANK (B6) ─────────────────────────────────────────
+describe('FILL_BLANK questions', () => {
+	beforeEach(() => {
+		pool.query.mockReset()
+		pool.getConnection.mockReset()
+	})
+
+	function submitText(base, answer_text, extra = {}) {
+		return fetch(`${base}/api/trivia/submit`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				event_id: 1,
+				question_id: 77,
+				answer_text,
+				claimed_lat: -26.1905,
+				claimed_lng: 28.0285,
+				...extra,
+			}),
+		})
+	}
+
+	test('normalizeAnswer ignores case and extra whitespace', () => {
+		expect(normalizeAnswer('  Nelson   MANDELA \n')).toBe(
+			'nelson mandela'
+		)
+		expect(normalizeAnswer(null)).toBe('')
+	})
+
+	test('GET never sends the answer: options is [] and trivia_options is not read', async () => {
+		pool.query
+			.mockResolvedValueOnce([[sampleEvent()]])
+			.mockResolvedValueOnce([
+				[
+					{
+						question_id: 77,
+						format: 'FILL_BLANK',
+						body: 'Wits was founded in ____.',
+						time_limit_s: 30,
+						difficulty: 1,
+					},
+				],
+			])
+			.mockResolvedValueOnce([[]]) // canAwardCard
+		await withServer(makeApp(), async (base) => {
+			const res = await fetch(
+				`${base}/api/trivia/event/1?lat=-26.1905&lng=28.0285`
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.format).toBe('FILL_BLANK')
+			expect(body.options).toEqual([])
+		})
+		const sqls = pool.query.mock.calls.map(([sql]) => String(sql))
+		expect(sqls.some((q) => q.includes('trivia_options'))).toBe(
+			false
+		)
+	})
+
+	test('correct typed answer (different case/spacing) is graded correct and earns points', async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[{ time_limit_s: 30, format: 'FILL_BLANK' }],
+			])
+			.mockResolvedValueOnce([
+				[
+					{ body: '1922' },
+					{ body: 'Nineteen Twenty-Two' },
+				],
+			]) // accepted answers
+			.mockResolvedValueOnce([
+				[{ option_id: 9, body: '1922' }],
+			]) // shown afterwards
+			.mockResolvedValueOnce([[sampleEvent()]])
+			.mockResolvedValueOnce([[]]) // canAwardCard
+		const conn = makeConn()
+		pool.getConnection.mockResolvedValue(conn)
+		await withServer(makeApp(), async (base) => {
+			const res = await submitText(
+				base,
+				'  nineteen   TWENTY-two '
+			)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.is_correct).toBe(true)
+			expect(body.points_awarded).toBeGreaterThan(0)
+			// Basic story 7: correct answer shown after answering.
+			expect(body.correct_option_text).toBe('1922')
+		})
+		expect(pool.query.mock.calls[1][0]).toMatch(/is_correct = 1/)
+		expect(pool.query.mock.calls[1][1]).toEqual([77])
+	})
+
+	test('wrong typed answer is graded incorrect, 0 points, answer revealed', async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[{ time_limit_s: 30, format: 'FILL_BLANK' }],
+			])
+			.mockResolvedValueOnce([[{ body: '1922' }]])
+			.mockResolvedValueOnce([
+				[{ option_id: 9, body: '1922' }],
+			])
+			.mockResolvedValueOnce([[sampleEvent()]])
+		const conn = makeConn()
+		pool.getConnection.mockResolvedValue(conn)
+		await withServer(makeApp(), async (base) => {
+			const body = await (
+				await submitText(base, '1923')
+			).json()
+			expect(body.is_correct).toBe(false)
+			expect(body.points_awarded).toBe(0)
+			expect(body.correct_option_text).toBe('1922')
+		})
+		expect(conn.calls.userPointsUpdate).toBe(0)
+	})
+
+	test('400 when a FILL_BLANK answer is sent as an option id instead of text', async () => {
+		pool.query.mockResolvedValueOnce([
+			[{ time_limit_s: 30, format: 'FILL_BLANK' }],
+		])
+		await withServer(makeApp(), async (base) => {
+			const res = await fetch(`${base}/api/trivia/submit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event_id: 1,
+					question_id: 77,
+					selected_option_id: 9,
+				}),
+			})
+			expect(res.status).toBe(400)
+			expect((await res.json()).error).toMatch(/answer_text/)
+		})
+	})
+
+	test('400 for blank typed text', async () => {
+		await withServer(makeApp(), async (base) => {
+			const res = await submitText(base, '   ')
+			expect(res.status).toBe(400)
+		})
+	})
+
+	test('400 when a multiple-choice question gets text instead of an option', async () => {
+		pool.query.mockResolvedValueOnce([
+			[{ time_limit_s: 30, format: 'MULTIPLE_CHOICE' }],
+		])
+		await withServer(makeApp(), async (base) => {
+			const res = await submitText(base, 'Pretoria')
+			expect(res.status).toBe(400)
+			expect((await res.json()).error).toMatch(
+				/selected_option_id is required/
+			)
 		})
 	})
 })
