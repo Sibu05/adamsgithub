@@ -1,6 +1,8 @@
 import { API_BASE } from './constants.js'
 import { updateAuthNav, logout } from './auth-helpers.js'
 import { startChromeDayNightCycle } from './campus-style.js'
+import { attachSellButton } from './card-sell.js'
+import { showToast } from './utils.js'
 
 // No live map on this page — drive the shared `body.night` chrome theme
 // from the same day/night check as the map. The admin console never does
@@ -25,6 +27,8 @@ const filterRarity = document.getElementById('filter-rarity')
 //  Auth
 
 btnLogout?.addEventListener('click', logout)
+
+let currentUser = null
 
 async function checkAccess() {
 	let res
@@ -56,6 +60,7 @@ async function checkAccess() {
 	}
 	try {
 		const user = await res.json()
+		currentUser = user
 
 		updateAuthNav(user)
 		elContent.classList.remove('hidden')
@@ -214,6 +219,23 @@ function buildCollectionCard(card) {
 			${card.quantity > 1 ? `<span class="cc-qty">×${card.quantity}</span>` : ''}
 		</div>
 	`
+
+	// I8: sell spare copies for points (only shown while quantity > 1).
+	attachSellButton(li, card, {
+		onSold: (result) => {
+			showToast(
+				`Sold 1 × ${card.name} for ${result.points_earned} pts${result.points_total != null ? ` — you now have ${result.points_total} pts` : ''}.`
+			)
+			if (currentUser && result.points_total != null) {
+				currentUser = {
+					...currentUser,
+					points: result.points_total,
+				}
+				updateAuthNav(currentUser)
+			}
+		},
+		onError: (err) => showToast(err.message, 'error'),
+	})
 
 	return li
 }

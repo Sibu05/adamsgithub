@@ -93,6 +93,24 @@ describe('GET /api/cards/collection/mine', () => {
 			expect(res.status).toBe(200)
 		})
 	})
+	test('each card carries its sell_value (points per duplicate sold)', async () => {
+		pool.query.mockResolvedValueOnce([
+			[
+				{ card_id: 1, rarity: 'RARE', quantity: 3 },
+				{
+					card_id: 2,
+					rarity: 'LEGENDARY',
+					quantity: 1,
+				},
+			],
+		])
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const body = await (
+				await fetch(`${base}/api/cards/collection/mine`)
+			).json()
+			expect(body.map((c) => c.sell_value)).toEqual([20, 100])
+		})
+	})
 })
 
 describe('POST /api/cards', () => {
@@ -271,6 +289,8 @@ describe('POST /api/cards/sell', () => {
 					)
 				)
 					return [{ affectedRows: 1 }]
+				if (q.includes('select points from users'))
+					return [[{ points: 140 }]]
 				return [[]]
 			}),
 		}
@@ -342,6 +362,26 @@ describe('POST /api/cards/sell', () => {
 			const body = await res.json()
 			expect(body.success).toBe(true)
 			expect(body.points_earned).toBe(40) // RARE 20 *2
+			expect(body.remaining_quantity).toBe(1)
+			expect(body.points_total).toBe(140)
 		})
+		// Quantity, points and ledger all change, in one transaction.
+		const sqls = conn.query.mock.calls.map(([sql]) =>
+			sql.replace(/\s+/g, ' ').trim()
+		)
+		expect(sqls).toEqual(
+			expect.arrayContaining([
+				expect.stringMatching(
+					/^UPDATE user_cards SET quantity = quantity - \?/
+				),
+				expect.stringMatching(
+					/^UPDATE users SET points = points \+ \?/
+				),
+				expect.stringMatching(
+					/INSERT INTO point_transactions/
+				),
+			])
+		)
+		expect(conn.commit).toHaveBeenCalledTimes(1)
 	})
 })
