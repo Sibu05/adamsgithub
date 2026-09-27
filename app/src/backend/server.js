@@ -46,6 +46,7 @@ import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
 import { startRotationScheduler } from './placement/rotation_job.js'
+import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -76,6 +77,18 @@ app.use(
 		credentials: true,
 	})
 )
+
+if (!process.env.SESSION_SECRET) {
+	const msg =
+		'SESSION_SECRET is not set — sessions are signed with the public dev fallback secret, so anyone can forge a session cookie. Set SESSION_SECRET in the environment.'
+	if (process.env.NODE_ENV === 'production') {
+		console.error(
+			`\n${'!'.repeat(72)}\n[SECURITY] ${msg}\n${'!'.repeat(72)}\n`
+		)
+	} else {
+		console.warn(`[session] ${msg}`)
+	}
+}
 
 const MySQLStore = mySQLSession(session)
 const sessionStore = new MySQLStore(
@@ -391,6 +404,27 @@ async function ensure_movement_trust_schema() {
 	}
 }
 
+async function warn_if_better_auth_tables_missing() {
+	// Read-only check. Better Auth doesn't create its own tables, and
+	// running its migration automatically here would also touch whatever
+	// shared/deployed DB this server points at — so it's an explicit step:
+	// `npm run db:migrate-auth`.
+	try {
+		const { tables, columns } =
+			await pending_better_auth_migrations(auth.options)
+		if (tables.length || columns.length) {
+			console.warn(
+				`[better-auth] Missing ${[...tables, ...columns].join(', ')} — Google and email sign-in will fail until you run: npm run db:migrate-auth`
+			)
+		}
+	} catch (err) {
+		console.warn(
+			'[better-auth] Could not check Better Auth tables:',
+			err.message
+		)
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
@@ -398,6 +432,7 @@ async function initialize_database() {
 	await ensure_curation_schema()
 	await ensure_placement_schema()
 	await ensure_movement_trust_schema()
+	await warn_if_better_auth_tables_missing()
 }
 
 async function seed_database() {

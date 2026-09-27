@@ -77,9 +77,12 @@ export async function googleSignIn() {
 		}
 
 		window.location.href = data.url
+		return { data: { url: data.url }, error: null }
 	} catch (error) {
+		// Same { data, error } shape as usernameSignIn/usernameSignUp;
+		// the auth drawer shows error.message to the player.
 		console.error('Google sign-in failed:', error)
-		alert(`Google sign-in failed: ${error.message}`)
+		return { data: null, error }
 	}
 }
 
