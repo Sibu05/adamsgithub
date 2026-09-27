@@ -257,7 +257,7 @@ export async function retireExpiredEvents(db, { now }) {
 
 export async function loadActiveEvents(db) {
 	const [rows] = await db.query(
-		`SELECT event_id, latitude, longitude FROM events WHERE is_active = TRUE`
+		`SELECT event_id, latitude, longitude, is_procedural FROM events WHERE is_active = TRUE`
 	)
 	return rows
 }
@@ -274,10 +274,14 @@ export async function loadRecentProceduralSpots(db, { limit }) {
 }
 
 export async function loadZoneLastUsed(db) {
+	// NULL = "on a campus path but outside every named zone". It's
+	// tracked too (under the key "null", the same key generatePlacements
+	// uses), otherwise it always looks never-used and wins every run's
+	// first pick.
 	const [rows] = await db.query(
 		`SELECT placement_zone, MAX(created_at) AS last_used
 		   FROM events
-		  WHERE is_procedural = TRUE AND placement_zone IS NOT NULL
+		  WHERE is_procedural = TRUE
 		  GROUP BY placement_zone`
 	)
 	const map = {}
@@ -414,9 +418,13 @@ export async function createProceduralEvents(
 		loadZoneLastUsed(db),
 	])
 
+	// Spacing is kept from ALL live events, but only live pop-ups count
+	// toward maxLive — manual events shouldn't use up pop-up slots.
 	const placements = generatePlacements({
 		graph,
 		activeEvents,
+		liveCount: activeEvents.filter((e) => Number(e.is_procedural))
+			.length,
 		recentSpots,
 		zoneLastUsed,
 		config: cfg,

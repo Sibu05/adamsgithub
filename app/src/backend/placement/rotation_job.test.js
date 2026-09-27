@@ -8,6 +8,7 @@ import {
 	isRotationDue,
 	maybeRunRotation,
 	startRotationScheduler,
+	loadZoneLastUsed,
 } from './rotation_job.js'
 import { createRng, DEFAULT_CONFIG } from './placement.js'
 import { FIXTURE_GRAPH } from './test_fixtures.js'
@@ -734,6 +735,66 @@ describe('runRotation — placement', () => {
 		expect(retiredCount).toBe(3)
 		expect(createdCount).toBeGreaterThanOrEqual(0)
 		expect(status).toBe('SUCCESS')
+	})
+})
+
+describe('runRotation — pop-up cap', () => {
+	// Well outside FIXTURE_GRAPH, so they never affect spacing.
+	const farAway = (i, is_procedural) => ({
+		event_id: 100 + i,
+		latitude: -26.3,
+		longitude: 28.2 + i * 0.01,
+		is_procedural,
+	})
+
+	test('manual (hand-authored) events do not use up pop-up slots', async () => {
+		const db = makeDb({
+			activeEvents: [0, 1, 2].map((i) => farAway(i, 0)),
+		})
+		const result = await runRotation(db, {
+			config: { maxLive: 2 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(2)
+	})
+
+	test('live pop-ups do count toward maxLive', async () => {
+		const db = makeDb({
+			activeEvents: [0, 1].map((i) => farAway(i, 1)),
+		})
+		const result = await runRotation(db, {
+			config: { maxLive: 2 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(result.createdCount).toBe(0)
+	})
+})
+
+describe('loadZoneLastUsed', () => {
+	test('tracks the unzoned (NULL) area too, under the key "null"', async () => {
+		const db = {
+			query: jest.fn(async () => [
+				[
+					{
+						placement_zone: 'great_hall',
+						last_used: '2026-01-01T00:00:00Z',
+					},
+					{
+						placement_zone: null,
+						last_used: '2026-01-02T00:00:00Z',
+					},
+				],
+			]),
+		}
+		const map = await loadZoneLastUsed(db)
+		expect(map.great_hall).toBe(Date.parse('2026-01-01T00:00:00Z'))
+		// generatePlacements looks the unzoned group up as zoneLastUsed[null]
+		expect(map[null]).toBe(Date.parse('2026-01-02T00:00:00Z'))
+		expect(db.query.mock.calls[0][0]).not.toMatch(/IS NOT NULL/)
 	})
 })
 

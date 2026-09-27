@@ -135,7 +135,7 @@ function zoneWeight(zoneId, zoneLastUsed, now) {
 /**
  * Choose new event locations along the campus path graph.
  *
- * - Never lets the live event count exceed config.maxLive.
+ * - Never lets the live pop-up count (liveCount) exceed config.maxLive.
  * - Keeps every new point >= minSpacingMeters from active events and
  *   from every other new point.
  * - Skips points within minSpacingMeters of recentSpots (cooldown).
@@ -150,6 +150,7 @@ function zoneWeight(zoneId, zoneLastUsed, now) {
 export function generatePlacements({
 	graph,
 	activeEvents = [],
+	liveCount = activeEvents.length,
 	recentSpots = [],
 	zoneLastUsed = {},
 	config = {},
@@ -158,7 +159,10 @@ export function generatePlacements({
 }) {
 	const cfg = { ...DEFAULT_CONFIG, ...config }
 
-	const slotsAvailable = cfg.maxLive - activeEvents.length
+	// activeEvents = everything to keep spacing from; liveCount = how many
+	// of them count toward the maxLive cap (the caller passes just the
+	// live pop-ups, so hand-authored events don't eat pop-up slots).
+	const slotsAvailable = cfg.maxLive - liveCount
 	if (slotsAvailable <= 0) return []
 
 	const activePoints = activeEvents.map(toPoint)
