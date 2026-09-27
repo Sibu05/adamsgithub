@@ -39,6 +39,7 @@ class FakeMap {
 		this.addControl = jest.fn()
 		this.setPaintProperty = jest.fn()
 		this.resize = jest.fn()
+		this.fitBounds = jest.fn()
 		FakeMap.instances.push(this)
 	}
 	on(event, cb) {
@@ -265,6 +266,71 @@ describe('Wits question pool on the Placement tab', () => {
 			document.querySelector('.placement-run-error')
 				.textContent
 		).toBe('Only 0 Wits-campus questions available')
+	})
+})
+
+describe('map framing (placementBounds / fit on open)', () => {
+	test('bounds wrap every live pop-up', () => {
+		expect(
+			placementConsole.placementBounds([
+				{ latitude: '-26.1915', longitude: '28.0303' },
+				{ latitude: '-26.1885', longitude: '28.0256' },
+				{ latitude: '-26.1930', longitude: '28.0282' },
+			])
+		).toEqual([
+			[28.0256, -26.193],
+			[28.0303, -26.1885],
+		])
+	})
+
+	test('no pop-ups: falls back to the whole path graph', () => {
+		expect(
+			placementConsole.placementBounds([], {
+				nodes: [
+					{ lat: -26.19, lng: 28.02 },
+					{ lat: -26.18, lng: 28.03 },
+				],
+			})
+		).toEqual([
+			[28.02, -26.19],
+			[28.03, -26.18],
+		])
+		expect(placementConsole.placementBounds([], null)).toBeNull()
+	})
+
+	test('loading status fits the map to the live pop-ups', async () => {
+		global.fetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => statusFixture(),
+		})
+		document.querySelector('[data-tab="placement"]').click()
+		const map = FakeMap.instances[0]
+		map.triggerLoad()
+		await new Promise((r) => setTimeout(r, 0))
+		await new Promise((r) => setTimeout(r, 0))
+		expect(map.fitBounds).toHaveBeenCalled()
+		const [bounds, opts] = map.fitBounds.mock.calls.at(-1)
+		expect(bounds).toEqual(
+			placementConsole.placementBounds(
+				statusFixture().activeEvents
+			)
+		)
+		expect(opts).toMatchObject({ padding: 48, maxZoom: 17.5 })
+	})
+
+	test('the placement map can zoom out past the player map limit and is top-down', async () => {
+		global.fetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => statusFixture(),
+		})
+		document.querySelector('[data-tab="placement"]').click()
+		await new Promise((r) => setTimeout(r, 0))
+		const { opts } = FakeMap.instances[0]
+		// Player map is clamped at minZoom 17 / minPitch 55; the overview
+		// must be able to show the whole campus (~zoom 15) flat.
+		expect(opts.minZoom).toBeLessThan(15)
+		expect(opts.minPitch).toBe(0)
+		expect(opts.pitch).toBe(0)
 	})
 })
 

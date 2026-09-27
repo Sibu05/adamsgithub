@@ -7,10 +7,7 @@ import { showToast, esc, formatDT } from './utils.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
-	CAMPUS_MIN_ZOOM,
 	CAMPUS_MAX_ZOOM,
-	CAMPUS_MIN_PITCH,
-	CAMPUS_MAX_PITCH,
 } from './campus-style.js'
 
 const PLACEMENT_API = `${API_BASE}/api/placement`
@@ -21,6 +18,10 @@ const PLACEMENT_API = `${API_BASE}/api/placement`
 const ZONE_COLOR_WINDOW_MS = 3 * 60 * 60 * 1000 // 3 hours
 
 const EMPTY_FC = { type: 'FeatureCollection', features: [] }
+
+// Placement map camera: whole-campus overview (see ensureMap).
+const OVERVIEW_ZOOM = 15.5
+const OVERVIEW_MIN_ZOOM = 13
 
 // ── DOM refs ──────────────────────────────────────────────────
 const tabButtons = document.querySelectorAll('.tab-btn')
@@ -167,6 +168,29 @@ export function describePlacementResult(data, kind, config = {}) {
 	return `Generated ${plural(created, 'new pop-up')}.`
 }
 
+/**
+ * [[west, south], [east, north]] around every live pop-up, or around the
+ * whole path graph when there are none (never an empty/blank view).
+ * Returns null if there's nothing to fit.
+ */
+export function placementBounds(activeEvents = [], graph = null) {
+	let pts = activeEvents
+		.map((ev) => [Number(ev.longitude), Number(ev.latitude)])
+		.filter(
+			([lng, lat]) =>
+				Number.isFinite(lng) && Number.isFinite(lat)
+		)
+	if (!pts.length && graph?.nodes?.length)
+		pts = graph.nodes.map((n) => [n.lng, n.lat])
+	if (!pts.length) return null
+	const lngs = pts.map((p) => p[0])
+	const lats = pts.map((p) => p[1])
+	return [
+		[Math.min(...lngs), Math.min(...lats)],
+		[Math.max(...lngs), Math.max(...lats)],
+	]
+}
+
 // ── Side panel rendering (pure DOM writes — no map involved) ────
 
 export function renderLiveCount(activeEvents, config) {
@@ -275,13 +299,17 @@ function ensureMap() {
 		container: 'placement-map',
 		style: createCampusStyle(),
 		center: CAMPUS_CAMERA.center,
-		zoom: Math.max(CAMPUS_MIN_ZOOM, CAMPUS_CAMERA.zoom - 2),
+		zoom: OVERVIEW_ZOOM,
 		pitch: 0,
 		bearing: 0,
-		minZoom: CAMPUS_MIN_ZOOM,
+		// An author's top-down overview, not the player's street-level
+		// camera: the player limits (minZoom 17, minPitch 55) clamped
+		// this map too, so it could never zoom out to frame all pop-ups
+		// (~zoom 15) and was always tilted.
+		minZoom: OVERVIEW_MIN_ZOOM,
 		maxZoom: CAMPUS_MAX_ZOOM,
-		minPitch: CAMPUS_MIN_PITCH,
-		maxPitch: CAMPUS_MAX_PITCH,
+		minPitch: 0,
+		maxPitch: 60,
 		// The base tiles are CartoDB-hosted but OSM-derived, and — once
 		// fetch_osm_paths.js has been run — the path graph, zones and
 		// walkway data drawn on top are OSM data directly. Set explicitly
@@ -512,6 +540,20 @@ function renderEventMarkers(activeEvents) {
 	})
 }
 
+// Frame every live pop-up (or the whole graph if there are none).
+// Called when the tab opens and after each load (initial / after Generate
+// or Rotate now), so the map never opens on an empty corner of campus.
+function fitToPopups(status, { animate = true } = {}) {
+	if (!mapReady || !status) return
+	const bounds = placementBounds(status.activeEvents, status.graph)
+	if (!bounds) return
+	map.fitBounds(bounds, {
+		padding: 48,
+		maxZoom: 17.5,
+		duration: animate ? 600 : 0,
+	})
+}
+
 function renderMapData(status) {
 	ensureMap()
 	if (!mapReady) return // 'load' handler re-calls this once ready
@@ -522,6 +564,7 @@ function renderMapData(status) {
 		(status.config?.minSpacingMeters ?? 80) / 2
 	)
 	renderEventMarkers(status.activeEvents)
+	fitToPopups(status)
 }
 
 // ── Data loading ──────────────────────────────────────────────
@@ -622,6 +665,7 @@ tabButtons.forEach((btn) => {
 				// Map was created but MapLibre needs a resize nudge after
 				// being shown from a display:none container.
 				map.resize()
+				fitToPopups(latestStatus, { animate: false })
 			}
 		} else {
 			tabPlacement?.classList.add('hidden')
