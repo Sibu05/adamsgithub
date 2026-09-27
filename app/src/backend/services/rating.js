@@ -53,14 +53,26 @@ export async function applyRatingUpdate(db, winnerId, loserId, isDraw = false) {
 	const season = await getActiveSeason(db)
 	if (!season) return null // ranked isn't configured yet
 
-	const winnerEntry = await getOrCreateEntry(db, season.season_id, winnerId)
+	const winnerEntry = await getOrCreateEntry(
+		db,
+		season.season_id,
+		winnerId
+	)
 	const loserEntry = await getOrCreateEntry(db, season.season_id, loserId)
 
 	const scoreWinner = isDraw ? 0.5 : 1
 	const scoreLoser = isDraw ? 0.5 : 0
 
-	const winnerDelta = computeEloDelta(winnerEntry.rating, loserEntry.rating, scoreWinner)
-	const loserDelta = computeEloDelta(loserEntry.rating, winnerEntry.rating, scoreLoser)
+	const winnerDelta = computeEloDelta(
+		winnerEntry.rating,
+		loserEntry.rating,
+		scoreWinner
+	)
+	const loserDelta = computeEloDelta(
+		loserEntry.rating,
+		winnerEntry.rating,
+		scoreLoser
+	)
 
 	const newWinnerRating = Math.max(0, winnerEntry.rating + winnerDelta)
 	const newLoserRating = Math.max(0, loserEntry.rating + loserDelta)
@@ -78,8 +90,16 @@ export async function applyRatingUpdate(db, winnerId, loserId, isDraw = false) {
 
 	return {
 		season_id: season.season_id,
-		winner: { user_id: winnerId, rating: newWinnerRating, delta: winnerDelta },
-		loser: { user_id: loserId, rating: newLoserRating, delta: loserDelta },
+		winner: {
+			user_id: winnerId,
+			rating: newWinnerRating,
+			delta: winnerDelta,
+		},
+		loser: {
+			user_id: loserId,
+			rating: newLoserRating,
+			delta: loserDelta,
+		},
 	}
 }
 
@@ -93,7 +113,10 @@ export async function rolloverSeasonIfDue(db) {
 	const season = await getActiveSeason(db)
 	if (!season || new Date(season.ends_at) > new Date()) return null
 
-	await db.query(`UPDATE seasons SET is_active = FALSE WHERE season_id = ?`, [season.season_id])
+	await db.query(
+		`UPDATE seasons SET is_active = FALSE WHERE season_id = ?`,
+		[season.season_id]
+	)
 
 	const now = new Date()
 	const ends = new Date(now)
@@ -115,7 +138,9 @@ export async function rolloverSeasonIfDue(db) {
 		const placeholders = entries
 			.map((e) => {
 				const softRating = Math.round(
-					DEFAULT_RATING + (e.rating - DEFAULT_RATING) * SOFT_RESET_FACTOR
+					DEFAULT_RATING +
+						(e.rating - DEFAULT_RATING) *
+							SOFT_RESET_FACTOR
 				)
 				values.push(newSeasonId, e.user_id, softRating)
 				return '(?, ?, 0, 0, 0, ?)'

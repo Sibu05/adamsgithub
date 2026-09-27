@@ -10,7 +10,10 @@ export function startSeasonScheduler(pool) {
 	const tick = async () => {
 		try {
 			const newSeasonId = await rolloverSeasonIfDue(pool)
-			if (newSeasonId) console.log(`[season job] rolled over to season ${newSeasonId}`)
+			if (newSeasonId)
+				console.log(
+					`[season job] rolled over to season ${newSeasonId}`
+				)
 		} catch (err) {
 			console.error('[season job]', err.message)
 		}

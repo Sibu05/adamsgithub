@@ -6,7 +6,10 @@ const router = express.Router()
 
 function requireAuth(req, res, next) {
 	const userId = req.session?.user?.user_id || req.user?.user_id
-	if (!userId) return res.status(401).json({ error: 'Unauthorised — please log in' })
+	if (!userId)
+		return res
+			.status(401)
+			.json({ error: 'Unauthorised — please log in' })
 	if (!req.user) req.user = req.session.user
 	next()
 }
@@ -62,7 +65,12 @@ router.get('/opponents', requireAuth, async (req, res) => {
 			 FROM leaderboard_entries le
 			 JOIN users u ON u.user_id = le.user_id
 			 WHERE le.season_id = ? AND le.user_id != ? AND le.rating BETWEEN ? AND ?`,
-			[season.season_id, req.user.user_id, myRating - band, myRating + band]
+			[
+				season.season_id,
+				req.user.user_id,
+				myRating - band,
+				myRating + band,
+			]
 		)
 		res.json({ opponents: rows, my_rating: myRating })
 	} catch (err) {

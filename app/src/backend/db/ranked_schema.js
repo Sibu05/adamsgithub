@@ -23,9 +23,10 @@ export async function ensure_ranked_schema() {
 			`SELECT season_id FROM seasons ORDER BY starts_at DESC LIMIT 1`
 		)
 		if (anySeason) {
-			await pool.query(`UPDATE seasons SET is_active = TRUE WHERE season_id = ?`, [
-				anySeason.season_id,
-			])
+			await pool.query(
+				`UPDATE seasons SET is_active = TRUE WHERE season_id = ?`,
+				[anySeason.season_id]
+			)
 		} else {
 			const now = new Date()
 			const ends = new Date(now)

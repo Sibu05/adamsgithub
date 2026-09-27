@@ -107,23 +107,28 @@ function broadcast_lobby_presence() {
 	}
 }
 
-async function set_battle_finished(battle_id, reason, winner = null, loser = null) {
- 	if (battle_id === null) return
- 	if (
- 		![
- 			'PENDING',
- 			'ACTIVE',
- 			'COMPLETED',
- 			'FORFEITED',
- 			'ABANDONED',
- 		].includes(reason)
- 	)
- 		reason = 'ABANDONED'
+async function set_battle_finished(
+	battle_id,
+	reason,
+	winner = null,
+	loser = null
+) {
+	if (battle_id === null) return
+	if (
+		![
+			'PENDING',
+			'ACTIVE',
+			'COMPLETED',
+			'FORFEITED',
+			'ABANDONED',
+		].includes(reason)
+	)
+		reason = 'ABANDONED'
 
- 	await pool.query(
- 		`UPDATE battles SET status = '${reason}', winner_id = ?, ended_at = NOW() WHERE battle_id = ?`,
- 		[winner, battle_id]
- 	)
+	await pool.query(
+		`UPDATE battles SET status = '${reason}', winner_id = ?, ended_at = NOW() WHERE battle_id = ?`,
+		[winner, battle_id]
+	)
 
 	// Ranked rating update. Only fires when both a winner and a human
 	// loser are known — NPC battles pass loser=null and are skipped
@@ -135,7 +140,7 @@ async function set_battle_finished(battle_id, reason, winner = null, loser = nul
 			console.error('rating update failed:', err)
 		}
 	}
- }
+}
 
 // 1. Create a PvP or NPC Battle row in MySQL
 export async function create_db_battle(player1_id, player2_id = null) {
