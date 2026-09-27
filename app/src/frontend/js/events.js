@@ -3,6 +3,8 @@ import { get_player_location } from './geolocation.js'
 import { distance } from './general.js'
 import { updateAuthNav, logout } from './auth-helpers.js'
 import { get_location_for_challenge } from './qr-scanner.js'
+import { esc } from './utils.js'
+import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
@@ -287,28 +289,23 @@ function refreshAllStopsProximity() {
 		ref.bobEl.style.transform = `scale(${(1 + 0.4 * t).toFixed(3)})`
 		ref.bobEl.style.setProperty('--pg', t.toFixed(3))
 
-		const inRange = d <= (ref.ev.radius_meters || 60)
+		const state = eventState(ref.ev, playerLatLng)
+		const inRange = state.inRange
 		if (ref.inRange !== inRange) {
 			ref.inRange = inRange
 			ref.el.classList.toggle('gym', inRange)
 			if (ref.cubeSpan) {
 				ref.cubeSpan.textContent = inRange ? '⚡' : '🏛️'
 			}
-			const card = elSidebar.querySelector(
-				`.sidebar-event[data-id="${ref.ev.event_id}"]`
-			)
-			if (card) {
-				const pill = card.querySelector(
-					'.sidebar-event-meta .meta-pill'
-				)
-				if (pill) {
-					pill.className = `meta-pill${inRange ? ' active' : ''}`
-					pill.textContent = inRange
-						? '✓ In range'
-						: 'Out of range'
-				}
-			}
 		}
+		// Distance changes on every move, so refresh the card's badges.
+		const meta = elSidebar.querySelector(
+			`.sidebar-event[data-id="${ref.ev.event_id}"] .sidebar-event-meta`
+		)
+		if (meta)
+			meta.innerHTML = metaPillsHTML(ref.ev, state, {
+				rangeFirst: true,
+			})
 
 		if (activePopup && activePopup === ref.popup) {
 			activePopup.setHTML(
@@ -404,31 +401,14 @@ function renderProximityCircles(events) {
 	})
 }
 
+// Popup markup is shared with the main map (js/event-status.js): live
+// status, range, distance/radius, points — and the Attempt button only
+// when the event is live AND the player is inside its radius.
 function buildPopupHTML(ev, inRange, onCampus = false) {
-	const rangePill = inRange
-		? `<span class="meta-pill active">✓ In range</span>`
-		: `<span class="meta-pill">Out of range</span>`
-
-	// Stops are visible and tappable worldwide; playing needs campus.
-	// On campus but outside the event radius → walk closer.
-	// Anywhere else (or no fix yet) → campus gate message.
-	const action = inRange
-		? `<button class="popup-challenge-btn" onclick="window._challenge(${ev.event_id})">⚡ Attempt Challenge</button>`
-		: onCampus
-			? `<p class="popup-out-of-range">Walk closer to attempt this challenge.</p>`
-			: `<p class="popup-out-of-range">🏛️ You need to be on Wits campus to attempt this challenge.</p>`
-
-	return `
-		<div class="popup-title">${ev.title}</div>
-		<div class="popup-desc">${ev.description || 'No description.'}</div>
-		<div class="popup-meta">
-			<span class="meta-pill active">Active</span>
-			${rangePill}
-			<span class="meta-pill">📍 ${ev.radius_meters}m</span>
-			<span class="meta-pill gold">⚡ ${ev.point_reward} pts</span>
-		</div>
-		${action}
-	`
+	return eventPopupHTML(ev, eventState(ev, playerLatLng), {
+		onCampus,
+		onAttempt: 'window._challenge',
+	})
 }
 
 // ── Load events ───────────────────────────────────────────────
@@ -542,12 +522,12 @@ function addSidebarCard(ev, inRange, lng, lat) {
 	card.dataset.id = ev.event_id
 
 	card.innerHTML = `
-		<div class="sidebar-event-title">${ev.title}</div>
-		<div class="sidebar-event-meta">
-			<span class="meta-pill${inRange ? ' active' : ''}">${inRange ? '✓ In range' : 'Out of range'}</span>
-			<span class="meta-pill gold">⚡ ${ev.point_reward} pts</span>
-			<span class="meta-pill">📍 ${ev.radius_meters}m</span>
-		</div>
+		<div class="sidebar-event-title">${esc(ev.title)}</div>
+		<div class="sidebar-event-meta">${metaPillsHTML(
+			ev,
+			{ ...eventState(ev, playerLatLng), inRange },
+			{ rangeFirst: true }
+		)}</div>
 	`
 
 	card.addEventListener('click', () => {
