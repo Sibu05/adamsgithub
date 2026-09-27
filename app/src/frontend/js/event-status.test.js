@@ -5,6 +5,8 @@ import {
 	eventActionHTML,
 	metaPillsHTML,
 	formatDistance,
+	isPastPopup,
+	consoleVisibleEvents,
 	DEFAULT_RADIUS_M,
 } from './event-status.js'
 
@@ -175,5 +177,59 @@ describe('helpers', () => {
 	test('formatDistance', () => {
 		expect(formatDistance(42.4)).toBe('42m')
 		expect(formatDistance(1530)).toBe('1.5km')
+	})
+})
+
+describe('Manage Events: past pop-ups', () => {
+	const live = {
+		event_id: 1,
+		is_procedural: 1,
+		curation_status: 'PUBLISHED',
+	}
+	const retired = {
+		event_id: 2,
+		is_procedural: 1,
+		curation_status: 'RETIRED',
+	}
+	const archived = {
+		event_id: 3,
+		is_procedural: true,
+		curation_status: 'ARCHIVED',
+	}
+	const manualRetired = {
+		event_id: 4,
+		is_procedural: 0,
+		curation_status: 'RETIRED',
+	}
+	const manualDraft = {
+		event_id: 5,
+		is_procedural: 0,
+		curation_status: 'DRAFT',
+	}
+	const all = [live, retired, archived, manualRetired, manualDraft]
+
+	test('isPastPopup: only procedural events that are retired or archived', () => {
+		expect(all.map(isPastPopup)).toEqual([
+			false,
+			true,
+			true,
+			false,
+			false,
+		])
+	})
+
+	test('hidden by default; live pop-ups and hand-made events stay listed', () => {
+		const { visible, pastCount } = consoleVisibleEvents(all)
+		expect(visible.map((e) => e.event_id)).toEqual([1, 4, 5])
+		expect(pastCount).toBe(2)
+	})
+
+	test('the toggle shows them again (nothing is removed from the data)', () => {
+		const { visible, pastCount } = consoleVisibleEvents(all, {
+			showPastPopups: true,
+		})
+		expect(visible).toHaveLength(5)
+		expect(pastCount).toBe(2)
+		expect(all).toHaveLength(5)
 	})
 })

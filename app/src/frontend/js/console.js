@@ -8,6 +8,7 @@ import {
 } from './utils.js'
 import { API_BASE } from './constants.js'
 import { updateAuthNav, isAdmin, logout } from './auth-helpers.js'
+import { consoleVisibleEvents } from './event-status.js'
 
 const AUTH_API = `${API_BASE}/api/auth`
 const CARDS_API = `${API_BASE}/api/cards`
@@ -90,6 +91,8 @@ const poolModalConfirm = document.getElementById('pool-modal-confirm')
 const eventToolbar = document.getElementById('event-toolbar')
 const eventFilterChips = document.getElementById('event-filter-chips')
 const eventSortSelect = document.getElementById('event-sort')
+const togglePastPopups = document.getElementById('toggle-past-popups')
+const elPastPopupsCount = document.getElementById('past-popups-count')
 const cardToolbar = document.getElementById('card-toolbar')
 const cardFilterChips = document.getElementById('card-filter-chips')
 const cardSortSelect = document.getElementById('card-sort')
@@ -333,8 +336,18 @@ function renderEvents() {
 	elEventList.innerHTML = ''
 	elEmpty.classList.add('hidden')
 
+	// Retired/archived procedural pop-ups pile up every rotation; hide
+	// them unless the author ticks "Show past pop-ups".
+	const { visible: listable, pastCount } = consoleVisibleEvents(
+		allEvents,
+		{
+			showPastPopups: !!togglePastPopups?.checked,
+		}
+	)
+	if (elPastPopupsCount) elPastPopupsCount.textContent = pastCount
+
 	const sortBy = eventSortSelect.value
-	const sorted = [...allEvents].sort((a, b) => {
+	const sorted = [...listable].sort((a, b) => {
 		switch (sortBy) {
 			case 'oldest':
 				return (
@@ -395,9 +408,15 @@ function renderEvents() {
 	} else {
 		elEventCount.textContent = `Showing ${visibleCount} of ${total} events`
 	}
+	if (!togglePastPopups?.checked && pastCount > 0) {
+		elEventCount.textContent += ` · ${pastCount} past pop-up${pastCount !== 1 ? 's' : ''} hidden`
+	}
 
 	if (visibleCount === 0 && total > 0) {
-		elEmpty.textContent = 'No events match the current filters.'
+		elEmpty.textContent =
+			listable.length === 0
+				? 'Only past pop-ups here — tick “Show past pop-ups” to see them.'
+				: 'No events match the current filters.'
 		elEmpty.classList.remove('hidden')
 	}
 }
@@ -1692,6 +1711,7 @@ wireFilterChips(
 )
 
 eventSortSelect.addEventListener('change', renderEvents)
+togglePastPopups?.addEventListener('change', renderEvents)
 cardSortSelect.addEventListener('change', renderCards)
 
 // ============================================================

@@ -131,3 +131,28 @@ export function eventPopupHTML(ev, state, opts) {
 		${eventActionHTML(ev, state, opts)}
 	`
 }
+
+// ── Authoring console (Manage Events) ─────────────────────────
+
+/**
+ * A procedural pop-up the rotation job has already retired (or an author
+ * archived). They pile up every rotation, so the Manage Events list hides
+ * them by default; the rows stay in the DB for history/analytics.
+ */
+export function isPastPopup(ev) {
+	const procedural =
+		ev.is_procedural === true || Number(ev.is_procedural) === 1
+	const status = String(ev.curation_status || '').toUpperCase()
+	return procedural && (status === 'RETIRED' || status === 'ARCHIVED')
+}
+
+/** Events to list in Manage Events, plus how many past pop-ups are hidden. */
+export function consoleVisibleEvents(events, { showPastPopups = false } = {}) {
+	const pastCount = events.filter(isPastPopup).length
+	return {
+		visible: showPastPopups
+			? events
+			: events.filter((ev) => !isPastPopup(ev)),
+		pastCount,
+	}
+}
