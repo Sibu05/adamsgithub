@@ -51,6 +51,9 @@ describe('googleSignIn', () => {
 		const [url, init] = global.fetch.mock.calls[0]
 		expect(url).toBe(`${API_BASE}/api/auth/sign-in/social`)
 		expect(JSON.parse(init.body).provider).toBe('google')
+		// Same landing page as username + PIN login.
+		expect(JSON.parse(init.body).callbackURL).toBe('/')
+		expect(JSON.parse(init.body).newUserCallbackURL).toBe('/')
 		expect(init.credentials).toBe('include')
 	})
 })
