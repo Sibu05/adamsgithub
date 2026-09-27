@@ -374,30 +374,194 @@ describe('PUT /api/questions/:id', () => {
 	})
 })
 
+// A tiny in-memory DB that enforces the REAL foreign keys on
+// trivia_questions (fk_option_question, fk_ta_question, fk_otq_question —
+// none cascade). The old route deleted the question row directly; that
+// passed against a plain mock but fails here exactly like MySQL did
+// (ER_ROW_IS_REFERENCED_2 / errno 1451).
+function makeFkDb({
+	questions = [],
+	options = {},
+	attempts = {},
+	offline = {},
+}) {
+	const state = {
+		questions: new Set(questions),
+		options: { ...options },
+		attempts: { ...attempts },
+		offline: { ...offline },
+		committed: false,
+		rolledBack: false,
+		log: [],
+	}
+	const conn = {
+		beginTransaction: jest.fn(async () => {}),
+		commit: jest.fn(async () => {
+			state.committed = true
+		}),
+		rollback: jest.fn(async () => {
+			state.rolledBack = true
+		}),
+		release: jest.fn(),
+		query: jest.fn(async (sql, params = []) => {
+			const q = sql.replace(/\s+/g, ' ').trim()
+			const id = Number(params[0])
+			state.log.push(q.split(' WHERE')[0])
+			if (
+				q.startsWith(
+					'SELECT question_id FROM trivia_questions'
+				)
+			)
+				return [
+					state.questions.has(id)
+						? [{ question_id: id }]
+						: [],
+				]
+			if (q.includes('FROM trivia_attempts'))
+				return [
+					[
+						{
+							answered:
+								(state.attempts[
+									id
+								] || 0) +
+								(state.offline[
+									id
+								] || 0),
+						},
+					],
+				]
+			if (q.startsWith('DELETE FROM trivia_options')) {
+				const n = state.options[id] || 0
+				state.options[id] = 0
+				return [{ affectedRows: n }]
+			}
+			if (q.startsWith('DELETE FROM trivia_questions')) {
+				if (
+					state.options[id] ||
+					state.attempts[id] ||
+					state.offline[id]
+				) {
+					const err = new Error(
+						'Cannot delete or update a parent row: a foreign key constraint fails'
+					)
+					err.code = 'ER_ROW_IS_REFERENCED_2'
+					err.errno = 1451
+					throw err
+				}
+				const had = state.questions.delete(id)
+				return [{ affectedRows: had ? 1 : 0 }]
+			}
+			return [[]]
+		}),
+	}
+	// Anything run straight on the pool sees the same FK rules.
+	pool.query.mockImplementation(async (sql, params) => {
+		if (String(sql).includes('FROM admin_roles'))
+			return [[{ 1: 1 }]]
+		return conn.query(sql, params)
+	})
+	pool.getConnection.mockResolvedValue(conn)
+	return { conn, state }
+}
+
 describe('DELETE /api/questions/:id', () => {
-	beforeEach(() => pool.query.mockReset())
+	beforeEach(() => {
+		pool.query.mockReset()
+		pool.getConnection.mockReset()
+	})
+
+	function del(base, id) {
+		return fetch(`${base}/api/questions/${id}`, {
+			method: 'DELETE',
+		})
+	}
+
+	test('the fake DB rejects deleting a question that still has options (as MySQL does)', async () => {
+		const { conn } = makeFkDb({ questions: [1], options: { 1: 4 } })
+		await expect(
+			conn.query(
+				'DELETE FROM trivia_questions WHERE question_id = ?',
+				[1]
+			)
+		).rejects.toMatchObject({ errno: 1451 })
+	})
+
+	test('200 deletes a question WITH options: options first, then the question, committed', async () => {
+		const { state } = makeFkDb({
+			questions: [1],
+			options: { 1: 4 },
+		})
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const res = await del(base, 1)
+			expect(res.status).toBe(200)
+		})
+		expect(state.questions.has(1)).toBe(false)
+		expect(state.options[1]).toBe(0)
+		expect(state.committed).toBe(true)
+		const iOpts = state.log.indexOf('DELETE FROM trivia_options')
+		const iQ = state.log.indexOf('DELETE FROM trivia_questions')
+		expect(iOpts).toBeGreaterThanOrEqual(0)
+		expect(iOpts).toBeLessThan(iQ)
+	})
+
 	test('404 when not found', async () => {
-		pool.query
-			.mockResolvedValueOnce([[{ 1: 1 }]]) // author
-			.mockResolvedValueOnce([{ affectedRows: 0 }]) // delete
-		const app = makeApp({ user_id: 1 })
-		await withServer(app, async (base) => {
-			const res = await fetch(`${base}/api/questions/999`, {
-				method: 'DELETE',
-			})
+		const { state } = makeFkDb({ questions: [] })
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const res = await del(base, 999)
 			expect(res.status).toBe(404)
 		})
+		expect(state.committed).toBe(false)
 	})
-	test('200 deletes', async () => {
-		pool.query
-			.mockResolvedValueOnce([[{ 1: 1 }]])
-			.mockResolvedValueOnce([{ affectedRows: 1 }])
-		const app = makeApp({ user_id: 1 })
-		await withServer(app, async (base) => {
-			const res = await fetch(`${base}/api/questions/1`, {
-				method: 'DELETE',
-			})
-			expect(res.status).toBe(200)
+
+	test('409 (not 500) when players have already answered it; nothing is deleted', async () => {
+		const { state } = makeFkDb({
+			questions: [2],
+			options: { 2: 2 },
+			attempts: { 2: 3 },
+		})
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const res = await del(base, 2)
+			expect(res.status).toBe(409)
+			expect((await res.json()).error).toMatch(
+				/already answered/
+			)
+		})
+		expect(state.questions.has(2)).toBe(true)
+		expect(state.options[2]).toBe(2)
+		expect(state.committed).toBe(false)
+	})
+
+	test('409 also covers queued offline attempts', async () => {
+		const { state } = makeFkDb({
+			questions: [3],
+			offline: { 3: 1 },
+		})
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			expect((await del(base, 3)).status).toBe(409)
+		})
+		expect(state.questions.has(3)).toBe(true)
+	})
+
+	test('500 rolls back and releases the connection on a DB error', async () => {
+		const { conn, state } = makeFkDb({ questions: [4] })
+		const original = conn.query.getMockImplementation()
+		conn.query.mockImplementation(async (sql, params) => {
+			if (sql.startsWith('DELETE FROM trivia_options'))
+				throw new Error('boom')
+			return original(sql, params)
+		})
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			expect((await del(base, 4)).status).toBe(500)
+		})
+		expect(state.rolledBack).toBe(true)
+		expect(conn.release).toHaveBeenCalled()
+	})
+
+	test('403 for a non-author', async () => {
+		pool.query.mockResolvedValueOnce([[]])
+		await withServer(makeApp({ user_id: 5 }), async (base) => {
+			expect((await del(base, 1)).status).toBe(403)
 		})
 	})
 })
