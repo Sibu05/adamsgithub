@@ -205,6 +205,39 @@ describe('API dates (Recent runs "Started" column)', () => {
 })
 
 describe('formatTimeLeft', () => {
+	test('works with the ISO strings the API really sends (was always "—")', () => {
+		const now = new Date('2026-09-27T11:00:00.000Z')
+		expect(
+			placementConsole.formatTimeLeft(
+				'2026-09-27T11:37:00.000Z',
+				now
+			)
+		).toBe('37m left')
+		expect(
+			placementConsole.formatTimeLeft(
+				'2026-09-27T12:04:00.000Z',
+				now
+			)
+		).toBe('1h 4m left')
+	})
+
+	test('Active events rows show time left for the real API shape', () => {
+		placementConsole.renderEventsList(
+			[
+				{
+					title: 'Pop-up Quest: Great Hall',
+					zone: 'great_hall',
+					ends_at: '2026-09-27T11:45:00.000Z',
+				},
+			],
+			new Date('2026-09-27T11:00:00.000Z')
+		)
+		expect(
+			document.querySelector('.placement-event-time')
+				.textContent
+		).toBe('45m left')
+	})
+
 	test('formats minutes left', () => {
 		const now = new Date('2026-01-01T00:00:00Z')
 		expect(

@@ -67,9 +67,10 @@ export function formatRunStarted(value) {
 
 /** "37m left" / "1h 4m left" / "Expiring" / "—" for an ISO/SQL datetime. */
 export function formatTimeLeft(endsAt, now = new Date()) {
-	if (!endsAt) return '—'
-	const end = new Date(endsAt.replace(' ', 'T') + 'Z')
-	if (isNaN(end)) return '—'
+	// parseApiDate: the API sends ISO strings ("...Z"); the old
+	// replace(' ', 'T') + 'Z' turned them into "...ZZ" → always "—".
+	const end = parseApiDate(endsAt)
+	if (!end) return '—'
 	const diffMs = end.getTime() - now.getTime()
 	if (diffMs <= 0) return 'Expiring'
 	const mins = Math.round(diffMs / 60000)
