@@ -111,13 +111,15 @@ router.post('/generate', requireAuth, requireEventAuthor, async (req, res) => {
 
 /**
  * POST /api/placement/rotate
- * Runs a full rotation (retire expired + fill back up) immediately, via
- * the same runRotation the scheduled job calls — bypasses the "is it due
- * yet" check, so a rotation can be demoed on demand.
+ * Forced rotation for demos: retires EVERY live pop-up (not just expired
+ * ones) and places a fresh batch right away, via the same runRotation
+ * the scheduled job calls — so spacing, walkable paths, the cap and the
+ * cooldown (new spots keep clear of recent ones) all still apply. The
+ * 15-min scheduler never forces; it only replaces expired pop-ups.
  */
 router.post('/rotate', requireAuth, requireEventAuthor, async (req, res) => {
 	try {
-		const result = await runRotation(pool, {})
+		const result = await runRotation(pool, { force: true })
 		res.json(result)
 	} catch (err) {
 		res.status(500).json({ error: err.message })

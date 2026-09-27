@@ -315,6 +315,64 @@ describe('retireExpiredEvents', () => {
 		expect(sql).toMatch(/retired_at = \?/)
 		expect(sql).toMatch(/is_procedural = TRUE/)
 		expect(params).toHaveLength(2)
+		expect(sql).toMatch(/ends_at <= \?/)
+	})
+
+	test('all: retires EVERY live pop-up, whatever its TTL (forced rotation)', async () => {
+		const db = makeDb({ retiredAffectedRows: 12 })
+		const count = await retireExpiredEvents(db, {
+			now: new Date(2000, 0, 1),
+			all: true,
+		})
+		expect(count).toBe(12)
+		const [sql, params] = db.query.mock.calls[0]
+		expect(sql).toMatch(/is_procedural = TRUE AND is_active = TRUE/)
+		expect(sql).not.toMatch(/ends_at/)
+		expect(params).toHaveLength(1)
+	})
+})
+
+describe('runRotation — force', () => {
+	const retireSql = (db) =>
+		db.query.mock.calls
+			.map(([sql]) => sql)
+			.find((sql) => sql.includes('RETIRED'))
+
+	test('force retires all live pop-ups, then refills (same placement rules)', async () => {
+		const db = makeDb({ retiredAffectedRows: 12 })
+		const result = await runRotation(db, {
+			force: true,
+			config: { maxLive: 3 },
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(retireSql(db)).not.toMatch(/ends_at/)
+		expect(result).toMatchObject({
+			forced: true,
+			retiredCount: 12,
+			status: 'SUCCESS',
+			maxLive: 3,
+		})
+		expect(result.createdCount).toBeGreaterThan(0)
+	})
+
+	test('without force (the scheduled job) only expired pop-ups are retired', async () => {
+		const db = makeDb()
+		const result = await runRotation(db, {
+			rng: createRng(1),
+			now: new Date(2026, 0, 1),
+			graph: FIXTURE_GRAPH,
+		})
+		expect(retireSql(db)).toMatch(/ends_at <= \?/)
+		expect(result.forced).toBe(false)
+	})
+
+	test('the scheduler tick never forces', async () => {
+		const db = makeDb()
+		await maybeRunRotation(db, DEFAULT_CONFIG)
+		const sql = retireSql(db)
+		if (sql) expect(sql).toMatch(/ends_at <= \?/)
 	})
 })
 

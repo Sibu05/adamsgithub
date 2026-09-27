@@ -366,6 +366,79 @@ describe('map rendering', () => {
 	})
 })
 
+describe('describePlacementResult', () => {
+	const cfg = { maxLive: 12, minSpacingMeters: 80 }
+	const d = (...a) => placementConsole.describePlacementResult(...a)
+
+	test('forced rotation: says how many were retired and placed', () => {
+		expect(
+			d(
+				{
+					retiredCount: 12,
+					createdCount: 12,
+					status: 'SUCCESS',
+					forced: true,
+					maxLive: 12,
+				},
+				'rotate',
+				cfg
+			)
+		).toBe(
+			'Rotated: retired 12 live pop-ups and placed 12 new ones.'
+		)
+	})
+
+	test('explains a short batch (spacing / cooldown)', () => {
+		expect(
+			d(
+				{
+					retiredCount: 12,
+					createdCount: 9,
+					status: 'SUCCESS',
+					maxLive: 12,
+				},
+				'rotate',
+				cfg
+			)
+		).toMatch(
+			/Only 9 of 12 fit — new pop-ups must stay 80 m apart.*cooldown/
+		)
+	})
+
+	test('generate at the cap points to Rotate now', () => {
+		expect(
+			d(
+				{ createdCount: 0, status: 'SUCCESS' },
+				'generate',
+				cfg
+			)
+		).toMatch(/already at the cap \(12 live\).*Rotate now/)
+		expect(
+			d(
+				{ createdCount: 3, status: 'SUCCESS' },
+				'generate',
+				cfg
+			)
+		).toBe('Generated 3 new pop-ups.')
+	})
+
+	test('lock held, skipped and failed runs are reported as such', () => {
+		expect(d({ skipped: true }, 'rotate', cfg)).toMatch(
+			/already running/
+		)
+		expect(
+			d(
+				{ status: 'SKIPPED', error: 'No author' },
+				'rotate',
+				cfg
+			)
+		).toBe('No author')
+		expect(
+			d({ status: 'FAILED', error: 'boom' }, 'rotate', cfg)
+		).toBe('Rotation failed: boom')
+	})
+})
+
 describe('Generate now / Rotate now buttons', () => {
 	test('Generate now POSTs to /api/placement/generate then refreshes status', async () => {
 		global.fetch
@@ -430,6 +503,10 @@ describe('Generate now / Rotate now buttons', () => {
 			expect.stringContaining('/api/placement/rotate'),
 			expect.objectContaining({ method: 'POST' })
 		)
+		expect(
+			document.getElementById('placement-action-msg')
+				.textContent
+		).toMatch(/Rotated: retired 1 live pop-up and placed 1 new one/)
 	})
 
 	test('buttons are disabled for the duration of the request', async () => {

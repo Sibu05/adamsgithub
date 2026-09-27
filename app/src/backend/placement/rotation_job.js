@@ -244,13 +244,15 @@ export async function pickPopupCards(db, { rng }) {
  * has passed — same shape as the curation "retire" endpoint in events.js:
  * is_active = FALSE, curation_status = 'RETIRED', retired_at set.
  */
-export async function retireExpiredEvents(db, { now }) {
+export async function retireExpiredEvents(db, { now, all = false }) {
 	const nowStr = toMysqlDatetime(now)
+	// all: retire every live pop-up regardless of TTL (the console's
+	// "Rotate now" demo button); otherwise only the expired ones.
 	const [result] = await db.query(
 		`UPDATE events
 		    SET is_active = FALSE, curation_status = 'RETIRED', retired_at = ?
-		  WHERE is_procedural = TRUE AND is_active = TRUE AND ends_at <= ?`,
-		[nowStr, nowStr]
+		  WHERE is_procedural = TRUE AND is_active = TRUE${all ? '' : ' AND ends_at <= ?'}`,
+		all ? [nowStr] : [nowStr, nowStr]
 	)
 	return result.affectedRows
 }
@@ -480,8 +482,9 @@ export async function createProceduralEvents(
 }
 
 /**
- * Runs one procedural-placement rotation: retires expired pop-ups, then
- * delegates to createProceduralEvents to fill back up to config.maxLive.
+ * Runs one procedural-placement rotation: retires expired pop-ups (or,
+ * with force, every live pop-up), then delegates to
+ * createProceduralEvents to fill back up to config.maxLive.
  * Takes a MySQL named lock so two rotation ticks (e.g. across restarts
  * or instances) never overlap. Always logs a placement_runs row and
  * always releases the lock, even on error.
@@ -504,6 +507,7 @@ export async function runRotation(
 		now = new Date(),
 		rng = createRng(Date.now()),
 		graph = campusGraph,
+		force = false,
 	} = {}
 ) {
 	const cfg = { ...DEFAULT_CONFIG, ...config }
@@ -530,6 +534,7 @@ export async function runRotation(
 		try {
 			retiredCount = await retireExpiredEvents(db, {
 				now: nowDate,
+				all: force,
 			})
 
 			const result = await createProceduralEvents(db, {
@@ -572,6 +577,8 @@ export async function runRotation(
 			createdCount,
 			status,
 			error: errorMessage,
+			forced: force,
+			maxLive: cfg.maxLive,
 		}
 	} finally {
 		lockConn.release()

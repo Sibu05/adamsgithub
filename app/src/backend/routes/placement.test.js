@@ -293,7 +293,8 @@ describe('POST /api/placement/rotate', () => {
 				error: null,
 			})
 		})
-		expect(runRotation).toHaveBeenCalledWith(pool, {})
+		// Forced: retires every live pop-up, not just expired ones.
+		expect(runRotation).toHaveBeenCalledWith(pool, { force: true })
 	})
 
 	// The route calls runRotation directly, bypassing the scheduler's

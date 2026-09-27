@@ -111,6 +111,38 @@ function badgeForStatus(status) {
 	return `<span class="meta-pill ${cls}">${esc(status)}</span>`
 }
 
+/**
+ * Plain-English result of a Generate / Rotate now click.
+ * `kind` is 'generate' or 'rotate'; `config` is the placement config
+ * (for maxLive / spacing when explaining a short batch).
+ */
+export function describePlacementResult(data, kind, config = {}) {
+	if (data?.skipped)
+		return 'Another rotation is already running — try again in a moment.'
+	if (data?.status === 'FAILED')
+		return `Rotation failed: ${data.error || 'unknown error'}`
+	if (data?.status === 'SKIPPED')
+		return data.error || 'Skipped — no pop-ups were created.'
+
+	const created = data?.createdCount ?? 0
+	const retired = data?.retiredCount ?? 0
+	const cap = data?.maxLive ?? config.maxLive
+	const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
+	const shortNote =
+		cap != null && created < cap
+			? ` Only ${created} of ${cap} fit — new pop-ups must stay ${config.minSpacingMeters ?? 80} m apart on walkable paths and away from the last few batches (cooldown).`
+			: ''
+
+	if (kind === 'rotate')
+		return (
+			`Rotated: retired ${plural(retired, 'live pop-up')} and placed ${plural(created, 'new one')}.` +
+			shortNote
+		)
+	if (created === 0)
+		return `Nothing to add — already at the cap (${cap ?? '?'} live). Use Rotate now to replace them.`
+	return `Generated ${plural(created, 'new pop-up')}.`
+}
+
 // ── Side panel rendering (pure DOM writes — no map involved) ────
 
 export function renderLiveCount(activeEvents, config) {
@@ -461,7 +493,7 @@ export async function loadPlacementStatus() {
 	}
 }
 
-async function runAction(url, btn, busyLabel, successLabel) {
+async function runAction(url, btn, busyLabel, kind) {
 	if (!btn) return
 	const otherBtn = btn === btnGenerate ? btnRotate : btnGenerate
 	const originalLabel = btn.textContent
@@ -479,14 +511,14 @@ async function runAction(url, btn, busyLabel, successLabel) {
 		if (!res.ok)
 			throw new Error(data.error || `Server ${res.status}`)
 
-		const created = data.createdCount ?? 0
-		const retired = data.retiredCount
-		const summary =
-			retired != null
-				? `${successLabel}: retired ${retired}, created ${created}`
-				: `${successLabel}: created ${created}`
-		setActionMsg(summary, 'success')
-		showToast(summary, 'success')
+		const summary = describePlacementResult(
+			data,
+			kind,
+			latestStatus?.config
+		)
+		const ok = !data.skipped && data.status !== 'FAILED'
+		setActionMsg(summary, ok ? 'success' : 'error')
+		showToast(summary, ok ? 'success' : 'error')
 
 		await loadPlacementStatus()
 	} catch (err) {
@@ -517,11 +549,11 @@ btnGenerate?.addEventListener('click', () =>
 		`${PLACEMENT_API}/generate`,
 		btnGenerate,
 		'Generating…',
-		'Generated'
+		'generate'
 	)
 )
 btnRotate?.addEventListener('click', () =>
-	runAction(`${PLACEMENT_API}/rotate`, btnRotate, 'Rotating…', 'Rotated')
+	runAction(`${PLACEMENT_API}/rotate`, btnRotate, 'Rotating…', 'rotate')
 )
 
 // ── Tab visibility (self-managed — console.js doesn't know this tab
