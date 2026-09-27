@@ -15,11 +15,19 @@ jest.unstable_mockModule('../placement/rotation_job.js', () => ({
 	createProceduralEvents: jest.fn(),
 	loadZoneLastUsed: jest.fn(),
 	campusGraph: fakeGraph,
+	countEligibleQuestions: jest.fn(async () => 8),
+	notEnoughQuestionsMessage: (n) =>
+		`Only ${n} Wits-campus questions available — each pop-up needs 2.`,
+	QUESTIONS_PER_POPUP: 2,
 }))
 
 const { default: pool } = await import('../utils/db.js')
-const { runRotation, createProceduralEvents, loadZoneLastUsed } =
-	await import('../placement/rotation_job.js')
+const {
+	runRotation,
+	createProceduralEvents,
+	loadZoneLastUsed,
+	countEligibleQuestions,
+} = await import('../placement/rotation_job.js')
 const { DEFAULT_CONFIG } = await import('../placement/placement.js')
 const { default: placementRouter } = await import('./placement.js')
 
@@ -122,6 +130,34 @@ describe('GET /api/placement/status', () => {
 				},
 			])
 			expect(body.recentRuns).toHaveLength(1)
+			expect(body.questionPool).toEqual({
+				witsQuestions: 8,
+				perPopup: 2,
+				maxDistanceMeters: 100,
+				enough: true,
+				message: null,
+			})
+		})
+	})
+
+	test('reports a Wits question shortage so the tab can show it', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ 1: 1 }]])
+			.mockResolvedValueOnce([[]])
+			.mockResolvedValueOnce([[]])
+		loadZoneLastUsed.mockResolvedValueOnce({})
+		countEligibleQuestions.mockResolvedValueOnce(1)
+		await withServer(makeApp({ user_id: 1 }), async (base) => {
+			const body = await (
+				await fetch(`${base}/api/placement/status`)
+			).json()
+			expect(body.questionPool).toMatchObject({
+				witsQuestions: 1,
+				enough: false,
+			})
+			expect(body.questionPool.message).toMatch(
+				/Only 1 Wits-campus/
+			)
 		})
 	})
 

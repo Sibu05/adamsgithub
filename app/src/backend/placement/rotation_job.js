@@ -2,15 +2,18 @@ import fs from 'fs'
 import path from 'path'
 import url from 'url'
 
-import { generatePlacements, createRng, DEFAULT_CONFIG } from './placement.js'
+import {
+	generatePlacements,
+	createRng,
+	DEFAULT_CONFIG,
+	isNearCampusPaths,
+	WITS_QUESTION_MAX_DISTANCE_M,
+} from './placement.js'
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url))
 
 export const campusGraph = JSON.parse(
 	fs.readFileSync(path.join(__dirname, 'campus_paths.json'), 'utf-8')
-)
-const popupQuestionBank = JSON.parse(
-	fs.readFileSync(path.join(__dirname, 'popup_questions.json'), 'utf-8')
 )
 
 const LOCK_NAME = 'placement_rotation'
@@ -44,9 +47,12 @@ function pickRandomDistinct(arr, count, rng) {
 }
 
 // ── Question templates ─────────────────────────────────────
-// Normalizes both an existing DB question (trivia_questions + its
-// trivia_options) and a fallback JSON entry to the same shape
-// questions.js's POST handler consumes: {type, text, correctAnswer, options}.
+// Normalizes an existing DB question (trivia_questions + its
+// trivia_options) to the shape questions.js's POST handler consumes:
+// {type, text, correctAnswer, options}.
+
+// Every pop-up gets exactly this many questions.
+export const QUESTIONS_PER_POPUP = 2
 
 // The formats insertQuestionOnConn knows how to copy — MULTIPLE_SELECT
 // would come across with no options, so it's never picked.
@@ -73,16 +79,6 @@ function normalizeDbTemplate(row, options) {
 	}
 }
 
-function normalizeJsonTemplate(entry) {
-	return {
-		id: `json:${entry.id}`,
-		type: entry.type,
-		text: entry.text,
-		correctAnswer: entry.correctAnswer,
-		options: entry.options,
-	}
-}
-
 // A DB question with missing options/answer would copy into an
 // unanswerable pop-up question — skip it.
 function isCopyable(q) {
@@ -94,14 +90,17 @@ function isCopyable(q) {
 const questionKey = (q) => q.text.trim().toLowerCase()
 
 /**
- * Questions from every PUBLISHED, non-procedural event — the curated
- * content pop-ups borrow from. Procedural events are excluded so a
- * pop-up never copies another pop-up's copy; drafts, in-review, retired
- * and archived events are excluded by requiring PUBLISHED.
+ * Questions pop-ups may copy: from PUBLISHED, non-procedural events that
+ * are ON WITS CAMPUS — within WITS_QUESTION_MAX_DISTANCE_M of the
+ * walkable campus path graph pop-ups are placed on. So a "Pop-up Quest:
+ * Great Hall" never asks about Gold Reef City or Constitution Hill.
+ * Procedural events are excluded so a pop-up never copies another
+ * pop-up's copy; drafts, in-review, retired and archived events are
+ * excluded by requiring PUBLISHED.
  */
-async function loadEligibleDbQuestions(db) {
-	const [rows] = await db.query(
-		`SELECT tq.question_id, tq.format, tq.body
+async function loadEligibleDbQuestions(db, graph = campusGraph) {
+	const [allRows] = await db.query(
+		`SELECT tq.question_id, tq.format, tq.body, e.latitude, e.longitude
 		   FROM trivia_questions tq
 		   JOIN events e ON e.event_id = tq.event_id
 		  WHERE e.curation_status = 'PUBLISHED'
@@ -109,6 +108,7 @@ async function loadEligibleDbQuestions(db) {
 		    AND tq.format IN (?)`,
 		[COPYABLE_FORMATS]
 	)
+	const rows = allRows.filter((r) => isNearCampusPaths(r, graph))
 	if (!rows.length) return []
 
 	const [optionRows] = await db.query(
@@ -138,22 +138,37 @@ async function loadEligibleDbQuestions(db) {
 	return [...byKey.values()]
 }
 
+/** How many distinct Wits-campus questions pop-ups can copy right now. */
+export async function countEligibleQuestions(db, graph = campusGraph) {
+	return (await loadEligibleDbQuestions(db, graph)).length
+}
+
+export function notEnoughQuestionsMessage(count) {
+	return (
+		`Only ${count} Wits-campus question${count === 1 ? '' : 's'} available — each pop-up needs ${QUESTIONS_PER_POPUP}. ` +
+		`Publish Wits events (within ${WITS_QUESTION_MAX_DISTANCE_M} m of the campus paths) with questions, ` +
+		`or run npm run db:seed-wits.`
+	)
+}
+
 /**
- * Pick 2 popup questions at random from existing questions on published,
- * non-procedural events, avoiding questions used by the last
- * `cooldownRotations` pop-up events. Order of preference:
- *   1. fresh DB questions
- *   2. fresh popup_questions.json entries — only to top up when fewer
- *      than 2 fresh DB questions exist
- *   3. anything (recently used included) — better than an event with
- *      fewer than 2 questions
+ * Pick QUESTIONS_PER_POPUP questions at random from Wits-campus events
+ * (see loadEligibleDbQuestions), avoiding questions used by the last
+ * `cooldownRotations` pop-up events:
+ *   1. fresh questions first
+ *   2. then recently used ones — better than a pop-up with fewer
+ *      questions. There is NO non-Wits fallback: with too few Wits
+ *      questions the caller skips the run and says how many exist.
  */
 export async function pickPopupQuestions(
 	db,
-	{ rng, cooldownRotations = DEFAULT_CONFIG.cooldownRotations } = {}
+	{
+		rng,
+		cooldownRotations = DEFAULT_CONFIG.cooldownRotations,
+		graph = campusGraph,
+	} = {}
 ) {
-	const dbQuestions = await loadEligibleDbQuestions(db)
-	const jsonQuestions = popupQuestionBank.map(normalizeJsonTemplate)
+	const dbQuestions = await loadEligibleDbQuestions(db, graph)
 
 	const [recentRows] = await db.query(
 		`SELECT tq.body
@@ -178,13 +193,16 @@ export async function pickPopupQuestions(
 			(q) => !chosen.has(questionKey(q))
 		)
 		picks.push(
-			...pickRandomDistinct(available, 2 - picks.length, rng)
+			...pickRandomDistinct(
+				available,
+				QUESTIONS_PER_POPUP - picks.length,
+				rng
+			)
 		)
 	}
 
 	fill(dbQuestions.filter(isFresh))
-	if (picks.length < 2) fill(jsonQuestions.filter(isFresh))
-	if (picks.length < 2) fill([...dbQuestions, ...jsonQuestions])
+	if (picks.length < QUESTIONS_PER_POPUP) fill(dbQuestions)
 
 	return picks
 }
@@ -412,6 +430,18 @@ export async function createProceduralEvents(
 		return { createdCount: 0, status: 'SKIPPED', error }
 	}
 
+	const witsQuestionCount = await countEligibleQuestions(db, graph)
+	if (witsQuestionCount < QUESTIONS_PER_POPUP) {
+		const error = notEnoughQuestionsMessage(witsQuestionCount)
+		console.warn(`[placement] ${error}`)
+		return {
+			createdCount: 0,
+			status: 'SKIPPED',
+			error,
+			witsQuestionCount,
+		}
+	}
+
 	const [activeEvents, recentSpots, zoneLastUsed] = await Promise.all([
 		loadActiveEvents(db),
 		loadRecentProceduralSpots(db, {
@@ -451,6 +481,7 @@ export async function createProceduralEvents(
 			const questions = await pickPopupQuestions(db, {
 				rng,
 				cooldownRotations: cfg.cooldownRotations,
+				graph,
 			})
 			for (const q of questions) {
 				await insertQuestionOnConn(conn, eventId, q)
@@ -532,6 +563,28 @@ export async function runRotation(
 		let errorMessage = null
 
 		try {
+			// A forced rotation must not empty the map when there's
+			// nothing to replace the live pop-ups with.
+			const witsQuestionCount = force
+				? await countEligibleQuestions(db, graph)
+				: null
+			if (force && witsQuestionCount < QUESTIONS_PER_POPUP) {
+				status = 'SKIPPED'
+				errorMessage =
+					notEnoughQuestionsMessage(
+						witsQuestionCount
+					) + ' Live pop-ups were left in place.'
+				return {
+					retiredCount,
+					createdCount,
+					status,
+					error: errorMessage,
+					forced: force,
+					maxLive: cfg.maxLive,
+					witsQuestionCount,
+				}
+			}
+
 			retiredCount = await retireExpiredEvents(db, {
 				now: nowDate,
 				all: force,
@@ -603,9 +656,11 @@ export async function isRotationDue(
 	db,
 	{ now = new Date(), rotationIntervalMinutes }
 ) {
+	// SKIPPED counts too: a run skipped for lack of Wits questions (or
+	// an author) retries on the normal interval, not every 60 s tick.
 	const [rows] = await db.query(
 		`SELECT started_at FROM placement_runs
-		  WHERE status = 'SUCCESS'
+		  WHERE status IN ('SUCCESS', 'SKIPPED')
 		  ORDER BY run_id DESC
 		  LIMIT 1`
 	)
@@ -654,7 +709,7 @@ export function startRotationScheduler(db, config = DEFAULT_CONFIG) {
 	const timer = setInterval(tick, SCHEDULER_TICK_MS)
 
 	console.log(
-		`[placement] rotation scheduler started — checking every ${SCHEDULER_TICK_MS / 1000}s, runs when ${config.rotationIntervalMinutes}m+ have passed since the last successful run`
+		`[placement] rotation scheduler started — checking every ${SCHEDULER_TICK_MS / 1000}s, runs when ${config.rotationIntervalMinutes}m+ have passed since the last successful or skipped run`
 	)
 	return timer
 }

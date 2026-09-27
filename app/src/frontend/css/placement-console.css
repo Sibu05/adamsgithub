@@ -99,3 +99,22 @@
 #placement-map .maplibregl-ctrl-attrib {
 	font-size: 0.65rem;
 }
+
+/* Not enough Wits-campus questions for pop-ups (see /status questionPool). */
+.placement-warning {
+	margin: 0.75rem 0 0;
+	padding: 0.6rem 0.75rem;
+	border-radius: var(--radius, 8px);
+	border: 1px solid #f5c26b;
+	border-left: 4px solid #f59e0b;
+	background: #fff8e6;
+	color: #7a4b00;
+	font-size: 0.8rem;
+	line-height: 1.4;
+}
+.placement-run-error {
+	display: block;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	white-space: normal;
+}

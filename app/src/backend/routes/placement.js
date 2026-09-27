@@ -7,7 +7,11 @@ import {
 	createProceduralEvents,
 	loadZoneLastUsed,
 	campusGraph,
+	countEligibleQuestions,
+	notEnoughQuestionsMessage,
+	QUESTIONS_PER_POPUP,
 } from '../placement/rotation_job.js'
+import { WITS_QUESTION_MAX_DISTANCE_M } from '../placement/placement.js'
 
 const router = express.Router()
 
@@ -79,8 +83,25 @@ router.get('/status', requireAuth, requireEventAuthor, async (req, res) => {
 			  LIMIT 10`
 		)
 
+		// Shown on the Placement tab so a shortage is visible up front,
+		// not only in the server log / a skipped run.
+		const witsQuestions = await countEligibleQuestions(pool)
+		const questionPool = {
+			witsQuestions,
+			perPopup: QUESTIONS_PER_POPUP,
+			maxDistanceMeters: WITS_QUESTION_MAX_DISTANCE_M,
+			enough: witsQuestions >= QUESTIONS_PER_POPUP,
+			message:
+				witsQuestions >= QUESTIONS_PER_POPUP
+					? null
+					: notEnoughQuestionsMessage(
+							witsQuestions
+						),
+		}
+
 		res.json({
 			config: DEFAULT_CONFIG,
+			questionPool,
 			activeEvents,
 			graph: {
 				nodes: campusGraph.nodes,

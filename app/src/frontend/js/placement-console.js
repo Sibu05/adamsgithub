@@ -31,6 +31,7 @@ const elConfigList = document.getElementById('placement-config-list')
 const elEventsList = document.getElementById('placement-events-list')
 const elRunsBody = document.getElementById('placement-runs-body')
 const elActionMsg = document.getElementById('placement-action-msg')
+const elQuestionWarning = document.getElementById('placement-question-warning')
 const btnGenerate = document.getElementById('btn-placement-generate')
 const btnRotate = document.getElementById('btn-placement-rotate')
 
@@ -173,7 +174,22 @@ export function renderLiveCount(activeEvents, config) {
 	elLiveCount.textContent = `${activeEvents.length} / ${config?.maxLive ?? '—'}`
 }
 
-export function renderConfig(config) {
+/**
+ * Warn on the tab itself when there aren't enough Wits-campus questions
+ * for a pop-up (the run would be SKIPPED) — not only in the server log.
+ */
+export function renderQuestionPool(pool) {
+	if (!elQuestionWarning) return
+	if (!pool || pool.enough) {
+		elQuestionWarning.classList.add('hidden')
+		elQuestionWarning.textContent = ''
+		return
+	}
+	elQuestionWarning.textContent = `⚠ ${pool.message}`
+	elQuestionWarning.classList.remove('hidden')
+}
+
+export function renderConfig(config, pool = null) {
 	if (!elConfigList || !config) return
 	const rows = [
 		['Min spacing', `${config.minSpacingMeters} m`],
@@ -182,6 +198,14 @@ export function renderConfig(config) {
 		['Rotation interval', `${config.rotationIntervalMinutes} min`],
 		['Radius', `${config.radiusMeters} m`],
 		['Cooldown rotations', config.cooldownRotations],
+		...(pool
+			? [
+					[
+						'Wits questions',
+						`${pool.witsQuestions} (${pool.perPopup} per pop-up)`,
+					],
+				]
+			: []),
 	]
 	elConfigList.innerHTML = rows
 		.map(
@@ -221,7 +245,11 @@ export function renderRuns(runs) {
 			(r) => `<tr>
 				<td style="padding:0.3rem 0">#${r.run_id}</td>
 				<td style="padding:0.3rem 0">${esc(formatRunStarted(r.started_at))}</td>
-				<td style="padding:0.3rem 0">${badgeForStatus(r.status)}</td>
+				<td style="padding:0.3rem 0" title="${esc(r.error ?? '')}">${badgeForStatus(r.status)}${
+					r.status !== 'SUCCESS' && r.error
+						? `<span class="placement-run-error">${esc(r.error)}</span>`
+						: ''
+				}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.retired_count}</td>
 				<td style="padding:0.3rem 0;text-align:right">${r.created_count}</td>
 			</tr>`
@@ -231,7 +259,8 @@ export function renderRuns(runs) {
 
 function renderSidePanel(status) {
 	renderLiveCount(status.activeEvents, status.config)
-	renderConfig(status.config)
+	renderConfig(status.config, status.questionPool)
+	renderQuestionPool(status.questionPool)
 	renderEventsList(status.activeEvents)
 	renderRuns(status.recentRuns)
 }

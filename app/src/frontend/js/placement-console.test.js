@@ -16,6 +16,7 @@ function setupDom() {
 			<button id="btn-placement-generate">Generate now</button>
 			<button id="btn-placement-rotate">Rotate now</button>
 			<p id="placement-action-msg" class="hidden"></p>
+			<p id="placement-question-warning" class="hidden"></p>
 		</div>
 		<div id="toast"></div>
 	`
@@ -201,6 +202,69 @@ describe('API dates (Recent runs "Started" column)', () => {
 
 	test('formatRunStarted shows — for a missing date', () => {
 		expect(placementConsole.formatRunStarted(null)).toBe('—')
+	})
+})
+
+describe('Wits question pool on the Placement tab', () => {
+	const warning = () =>
+		document.getElementById('placement-question-warning')
+
+	test('shows the shortage message on the tab when there are too few', () => {
+		placementConsole.renderQuestionPool({
+			witsQuestions: 1,
+			perPopup: 2,
+			enough: false,
+			message: 'Only 1 Wits-campus question available — each pop-up needs 2.',
+		})
+		expect(warning().classList.contains('hidden')).toBe(false)
+		expect(warning().textContent).toMatch(
+			/Only 1 Wits-campus question/
+		)
+	})
+
+	test('hidden when there are enough', () => {
+		placementConsole.renderQuestionPool({
+			witsQuestions: 24,
+			perPopup: 2,
+			enough: true,
+			message: null,
+		})
+		expect(warning().classList.contains('hidden')).toBe(true)
+	})
+
+	test('config panel lists the Wits question count', () => {
+		placementConsole.renderConfig(
+			{
+				minSpacingMeters: 80,
+				maxLive: 12,
+				eventTtlMinutes: 60,
+				rotationIntervalMinutes: 15,
+				radiusMeters: 30,
+				cooldownRotations: 3,
+			},
+			{ witsQuestions: 24, perPopup: 2, enough: true }
+		)
+		expect(
+			document.getElementById('placement-config-list')
+				.textContent
+		).toMatch(/Wits questions\s*24 \(2 per pop-up\)/)
+	})
+
+	test('a SKIPPED run shows its reason in Recent runs', () => {
+		placementConsole.renderRuns([
+			{
+				run_id: 9,
+				started_at: '2026-09-27T11:13:00.000Z',
+				status: 'SKIPPED',
+				error: 'Only 0 Wits-campus questions available',
+				retired_count: 0,
+				created_count: 0,
+			},
+		])
+		expect(
+			document.querySelector('.placement-run-error')
+				.textContent
+		).toBe('Only 0 Wits-campus questions available')
 	})
 })
 
