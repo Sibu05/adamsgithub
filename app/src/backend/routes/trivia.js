@@ -435,10 +435,12 @@ router.post('/submit', requireAuth, async (req, res) => {
 				parseFloat(event.latitude),
 				parseFloat(event.longitude)
 			)
+			// 'FAILED' (not 'REJECTED') — must be a value of the
+			// location_check_log.status ENUM, or the insert errors.
 			locationStatus =
 				distance <= event.radius_meters
 					? 'VERIFIED'
-					: 'REJECTED'
+					: 'FAILED'
 		}
 
 		const locationVerified =

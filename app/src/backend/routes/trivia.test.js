@@ -484,6 +484,51 @@ describe('POST /api/trivia/submit', () => {
 		expect(conn.calls.userPointsUpdate).toBe(1)
 	})
 
+	test('200 — answer from outside the radius is logged as FAILED (a valid status ENUM value), 0 points', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ time_limit_s: 30 }]])
+			.mockResolvedValueOnce([[{ is_correct: 1 }]])
+			.mockResolvedValueOnce([
+				[{ option_id: 2, body: 'Pretoria' }],
+			])
+			.mockResolvedValueOnce([
+				[sampleEvent({ radius_meters: 50 })],
+			])
+
+		const conn = makeConn()
+		pool.getConnection.mockResolvedValue(conn)
+
+		await withServer(makeApp(), async (base) => {
+			const res = await fetch(`${base}/api/trivia/submit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event_id: 1,
+					question_id: 42,
+					selected_option_id: 2,
+					claimed_lat: -26.2, // ~1 km away
+					claimed_lng: 28.0285,
+				}),
+			})
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.location_verified).toBe(false)
+			expect(body.points_awarded).toBe(0)
+		})
+
+		const status = conn.calls.locationCheckParams[5]
+		expect(status).toBe('FAILED')
+		// Must match schema.sql's location_check_log.status ENUM.
+		expect([
+			'PENDING',
+			'VERIFIED',
+			'FAILED',
+			'SPOOFED',
+			'FALLBACK_QR',
+		]).toContain(status)
+		expect(conn.calls.userPointsUpdate).toBe(0)
+	})
+
 	test('200 — first-ever check is logged unflagged with no previous check', async () => {
 		pool.query
 			.mockResolvedValueOnce([[{ time_limit_s: 30 }]])
