@@ -7,35 +7,12 @@ jest.unstable_mockModule('../utils/db.js', () => ({
 }))
 
 const { default: pool } = await import('../utils/db.js')
-const { default: ranked_router } = await import('./ranked.js')
-
-import express from 'express'
-import { createServer } from 'http'
-
-// ── Test harness (same shape as battles.test.js) ────────────
-
-function makeApp(sessionUser = { user_id: 1 }) {
-	const app = express()
-	app.use(express.json())
-	app.use((req, _res, next) => {
-		req.user = sessionUser
-		req.session = sessionUser ? { user: sessionUser } : {}
-		next()
-	})
-	app.use('/api/ranked', ranked_router)
-	return app
-}
-
-async function withServer(app, fn) {
-	const server = createServer(app)
-	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-	const { port } = server.address()
-	try {
-		await fn(`http://127.0.0.1:${port}`)
-	} finally {
-		await new Promise((resolve) => server.close(resolve))
-	}
-}
+const {
+	computeEloDelta,
+	getActiveSeason,
+	applyRatingUpdate,
+	rolloverSeasonIfDue,
+} = await import('./rating.js')
 
 // ── Fixture state, mutated per-test ──────────────────────────
 
@@ -44,186 +21,227 @@ let state
 function dispatch(sql, params) {
 	const q = String(sql).trim().toLowerCase().replace(/\s+/g, ' ')
 
-	if (q.startsWith('select * from seasons'))
-		return [state.season ? [state.season] : []]
+	if (q.startsWith('select * from seasons where is_active = true'))
+		return [state.activeSeason ? [state.activeSeason] : []]
 
-	if (
-		q.startsWith(
-			'select rating, wins, losses from leaderboard_entries'
-		)
-	)
-		return [state.entry ? [state.entry] : []]
+	if (q.startsWith('select rating, wins, losses from leaderboard_entries')) {
+		const [seasonId, userId] = params
+		const entry = state.entries?.[`${seasonId}:${userId}`]
+		return [entry ? [entry] : []]
+	}
 
-	if (q.startsWith('select le.user_id, le.rating, u.name'))
-		return [state.opponents || []]
+	if (q.startsWith('insert into leaderboard_entries')) {
+		state.inserts = state.inserts || []
+		state.inserts.push(params)
+		return [{ insertId: 1 }]
+	}
+
+	if (q.startsWith('update leaderboard_entries set rating')) {
+		state.updates = state.updates || []
+		state.updates.push(params)
+		return [{}]
+	}
+
+	if (q.startsWith('update seasons set is_active = false')) {
+		state.deactivated = params[0]
+		return [{}]
+	}
+
+	if (q.startsWith('insert into seasons')) {
+		state.newSeasonInsert = params
+		return [{ insertId: 2 }]
+	}
+
+	if (q.startsWith('select user_id, rating from leaderboard_entries where season_id'))
+		return [state.oldSeasonEntries || []]
 
 	throw new Error(`Unexpected query: ${q}`)
 }
 
 beforeEach(() => {
-	jest.spyOn(console, 'log').mockImplementation(() => {})
-	state = {
-		season: { season_id: 1, name: 'Season 1', is_active: true },
-		entry: null,
-		opponents: [],
-	}
+	state = {}
 	pool.query.mockReset()
-	pool.query.mockImplementation(async (sql, params) =>
-		dispatch(sql, params)
-	)
+	pool.query.mockImplementation(async (sql, params) => dispatch(sql, params))
 })
 
-afterEach(() => {
-	console.log.mockRestore()
-})
+// ── computeEloDelta — pure function ──────────────────────────
 
-// ── GET /api/ranked/season ───────────────────────────────────
-
-describe('GET /api/ranked/season', () => {
-	test('returns the active season (public — no auth required)', async () => {
-		await withServer(makeApp(null), async (url) => {
-			const res = await fetch(`${url}/api/ranked/season`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				season: state.season,
-			})
-		})
+describe('computeEloDelta', () => {
+	test('equal ratings, a win, moves by half the K-factor', () => {
+		expect(computeEloDelta(1000, 1000, 1)).toBe(16)
 	})
 
-	test('returns null when no season is active', async () => {
-		state.season = null
-		await withServer(makeApp(null), async (url) => {
-			const res = await fetch(`${url}/api/ranked/season`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({ season: null })
-		})
+	test('equal ratings, a loss, moves down by half the K-factor', () => {
+		expect(computeEloDelta(1000, 1000, 0)).toBe(-16)
 	})
 
-	test('500 when the query fails', async () => {
-		jest.spyOn(console, 'error').mockImplementation(() => {})
-		pool.query.mockRejectedValue(new Error('db down'))
-		await withServer(makeApp(null), async (url) => {
-			const res = await fetch(`${url}/api/ranked/season`)
-			expect(res.status).toBe(500)
-		})
-		console.error.mockRestore()
+	test('equal ratings, a draw, moves by ~0', () => {
+		expect(computeEloDelta(1000, 1000, 0.5)).toBe(0)
+	})
+
+	test('a big underdog winning gains close to the full K-factor', () => {
+		const delta = computeEloDelta(800, 1200, 1)
+		expect(delta).toBeGreaterThan(28)
+		expect(delta).toBeLessThanOrEqual(32)
+	})
+
+	test('a big favourite winning gains very little', () => {
+		const delta = computeEloDelta(1200, 800, 1)
+		expect(delta).toBeGreaterThanOrEqual(0)
+		expect(delta).toBeLessThan(4)
 	})
 })
 
-// ── GET /api/ranked/me ────────────────────────────────────────
+// ── getActiveSeason ───────────────────────────────────────────
 
-describe('GET /api/ranked/me', () => {
-	test('401 when not logged in', async () => {
-		await withServer(makeApp(null), async (url) => {
-			const res = await fetch(`${url}/api/ranked/me`)
-			expect(res.status).toBe(401)
-		})
+describe('getActiveSeason', () => {
+	test('returns the active season row', async () => {
+		state.activeSeason = { season_id: 1, name: 'Season 1' }
+		await expect(getActiveSeason(pool)).resolves.toEqual(state.activeSeason)
 	})
 
-	test('rating and season are null when no season is active', async () => {
-		state.season = null
-		await withServer(makeApp(), async (url) => {
-			const res = await fetch(`${url}/api/ranked/me`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				rating: null,
-				season: null,
-			})
-		})
-	})
-
-	test('returns the existing entry for the logged-in user', async () => {
-		state.entry = { rating: 1120, wins: 4, losses: 1 }
-		await withServer(makeApp({ user_id: 10 }), async (url) => {
-			const res = await fetch(`${url}/api/ranked/me`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				season_id: 1,
-				rating: 1120,
-				wins: 4,
-				losses: 1,
-			})
-		})
-	})
-
-	test('defaults to 1000/0/0 when the season is active but the user has no entry yet', async () => {
-		state.entry = null
-		await withServer(makeApp({ user_id: 10 }), async (url) => {
-			const res = await fetch(`${url}/api/ranked/me`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				season_id: 1,
-				rating: 1000,
-				wins: 0,
-				losses: 0,
-			})
-		})
-	})
-
-	test('500 when the query fails', async () => {
-		jest.spyOn(console, 'error').mockImplementation(() => {})
-		pool.query.mockRejectedValue(new Error('db down'))
-		await withServer(makeApp(), async (url) => {
-			const res = await fetch(`${url}/api/ranked/me`)
-			expect(res.status).toBe(500)
-		})
-		console.error.mockRestore()
+	test('returns null when there is none', async () => {
+		state.activeSeason = null
+		await expect(getActiveSeason(pool)).resolves.toBeNull()
 	})
 })
 
-// ── GET /api/ranked/opponents ────────────────────────────────
+// ── applyRatingUpdate ─────────────────────────────────────────
 
-describe('GET /api/ranked/opponents', () => {
-	test('401 when not logged in', async () => {
-		await withServer(makeApp(null), async (url) => {
-			const res = await fetch(`${url}/api/ranked/opponents`)
-			expect(res.status).toBe(401)
-		})
+describe('applyRatingUpdate', () => {
+	test('returns null when there is no active season', async () => {
+		state.activeSeason = null
+		const result = await applyRatingUpdate(pool, 10, 20)
+		expect(result).toBeNull()
 	})
 
-	test('empty list when no season is active', async () => {
-		state.season = null
-		await withServer(makeApp(), async (url) => {
-			const res = await fetch(`${url}/api/ranked/opponents`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({ opponents: [] })
-		})
+	test('returns null for missing or equal participants', async () => {
+		state.activeSeason = { season_id: 1 }
+		expect(await applyRatingUpdate(pool, null, 20)).toBeNull()
+		expect(await applyRatingUpdate(pool, 10, null)).toBeNull()
+		expect(await applyRatingUpdate(pool, 10, 10)).toBeNull()
 	})
 
-	test("returns same-band opponents using the caller's rating", async () => {
-		state.entry = { rating: 1050, wins: 2, losses: 0 }
-		state.opponents = [
-			{ user_id: 20, rating: 1100, name: 'Bob' },
-			{ user_id: 30, rating: 950, name: 'Carol' },
+	test('creates entries at the default rating when neither player has one yet', async () => {
+		state.activeSeason = { season_id: 1 }
+		state.entries = {}
+
+		const result = await applyRatingUpdate(pool, 10, 20)
+
+		expect(result.winner.user_id).toBe(10)
+		expect(result.loser.user_id).toBe(20)
+		expect(result.winner.rating).toBe(1000 + 16) // equal starting ratings
+		expect(result.loser.rating).toBe(1000 - 16)
+		expect(state.inserts.length).toBe(2) // one getOrCreateEntry insert per player
+		expect(state.updates.length).toBe(2) // one rating UPDATE per player
+	})
+
+	test('updates existing entries and increments wins/losses', async () => {
+		state.activeSeason = { season_id: 1 }
+		state.entries = {
+			'1:10': { rating: 1100, wins: 3, losses: 1 },
+			'1:20': { rating: 1000, wins: 1, losses: 2 },
+		}
+
+		const result = await applyRatingUpdate(pool, 10, 20)
+
+		expect(result.winner.rating).toBeGreaterThan(1100)
+		expect(result.loser.rating).toBeLessThan(1000)
+
+		// [newRating, winsIncrement, lossesIncrement, seasonId, userId]
+		const winnerUpdate = state.updates.find((u) => u[4] === 10)
+		const loserUpdate = state.updates.find((u) => u[4] === 20)
+		expect(winnerUpdate[1]).toBe(1) // wins += 1
+		expect(winnerUpdate[2]).toBe(0)
+		expect(loserUpdate[1]).toBe(0)
+		expect(loserUpdate[2]).toBe(1) // losses += 1
+	})
+
+	test('a draw increments neither wins nor losses', async () => {
+		state.activeSeason = { season_id: 1 }
+		state.entries = {
+			'1:10': { rating: 1000, wins: 0, losses: 0 },
+			'1:20': { rating: 1000, wins: 0, losses: 0 },
+		}
+
+		await applyRatingUpdate(pool, 10, 20, true)
+
+		for (const update of state.updates) {
+			expect(update[1]).toBe(0)
+			expect(update[2]).toBe(0)
+		}
+	})
+
+	test('rating never drops below zero', async () => {
+		state.activeSeason = { season_id: 1 }
+		state.entries = {
+			'1:10': { rating: 1000, wins: 0, losses: 0 },
+			'1:20': { rating: 5, wins: 0, losses: 0 },
+		}
+
+		const result = await applyRatingUpdate(pool, 10, 20)
+		expect(result.loser.rating).toBeGreaterThanOrEqual(0)
+	})
+})
+
+// ── rolloverSeasonIfDue ───────────────────────────────────────
+
+describe('rolloverSeasonIfDue', () => {
+	test('returns null when there is no active season', async () => {
+		state.activeSeason = null
+		await expect(rolloverSeasonIfDue(pool)).resolves.toBeNull()
+	})
+
+	test('returns null when the active season has not ended yet', async () => {
+		const future = new Date(Date.now() + 1000 * 60 * 60 * 24 * 5)
+		state.activeSeason = {
+			season_id: 1,
+			name: 'Season 1',
+			ends_at: future.toISOString(),
+		}
+		await expect(rolloverSeasonIfDue(pool)).resolves.toBeNull()
+	})
+
+	test('closes the old season and opens the next one, past its end date', async () => {
+		const past = new Date(Date.now() - 1000 * 60 * 60)
+		state.activeSeason = {
+			season_id: 1,
+			name: 'Season 1',
+			ends_at: past.toISOString(),
+		}
+		state.oldSeasonEntries = [
+			{ user_id: 10, rating: 1200 },
+			{ user_id: 20, rating: 800 },
 		]
-		await withServer(makeApp({ user_id: 10 }), async (url) => {
-			const res = await fetch(`${url}/api/ranked/opponents`)
-			expect(res.status).toBe(200)
-			expect(await res.json()).toEqual({
-				opponents: state.opponents,
-				my_rating: 1050,
-			})
-		})
+
+		const newSeasonId = await rolloverSeasonIfDue(pool)
+
+		expect(newSeasonId).toBe(2)
+		expect(state.deactivated).toBe(1)
+		expect(state.newSeasonInsert[0]).toBe('Season 2')
+		// soft reset: compressed halfway back toward 1000
+		expect(state.inserts[0]).toEqual([2, 10, 1100, 2, 20, 900])
 	})
 
-	test('falls back to the default rating (1000) when the caller has no entry yet', async () => {
-		state.entry = null
-		state.opponents = [{ user_id: 20, rating: 980, name: 'Bob' }]
-		await withServer(makeApp({ user_id: 10 }), async (url) => {
-			const res = await fetch(`${url}/api/ranked/opponents`)
-			expect(res.status).toBe(200)
-			const body = await res.json()
-			expect(body.my_rating).toBe(1000)
-		})
+	test('names the next season "Season 2" when the previous name has no trailing number', async () => {
+		const past = new Date(Date.now() - 1000)
+		state.activeSeason = {
+			season_id: 1,
+			name: 'Preseason',
+			ends_at: past.toISOString(),
+		}
+		state.oldSeasonEntries = []
+
+		await rolloverSeasonIfDue(pool)
+		expect(state.newSeasonInsert[0]).toBe('Season 2')
 	})
 
-	test('500 when the query fails', async () => {
-		jest.spyOn(console, 'error').mockImplementation(() => {})
-		pool.query.mockRejectedValue(new Error('db down'))
-		await withServer(makeApp(), async (url) => {
-			const res = await fetch(`${url}/api/ranked/opponents`)
-			expect(res.status).toBe(500)
-		})
-		console.error.mockRestore()
+	test('does nothing to leaderboard_entries when the old season had no entries', async () => {
+		const past = new Date(Date.now() - 1000)
+		state.activeSeason = { season_id: 1, name: 'Season 1', ends_at: past.toISOString() }
+		state.oldSeasonEntries = []
+
+		await rolloverSeasonIfDue(pool)
+		expect(state.inserts).toBeUndefined()
 	})
 })
