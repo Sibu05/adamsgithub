@@ -9,6 +9,7 @@ import {
 import { API_BASE } from './constants.js'
 import { updateAuthNav, isAdmin, logout } from './auth-helpers.js'
 import { consoleVisibleEvents } from './event-status.js'
+import { correctAnswerPlaceholder } from './question-form.js'
 
 const AUTH_API = `${API_BASE}/api/auth`
 const CARDS_API = `${API_BASE}/api/cards`
@@ -1384,14 +1385,8 @@ function refreshCorrectDatalist(type) {
 	}
 }
 
-function updateCorrectPlaceholder(type) {
-	if (type === 'TRUE_FALSE') {
-		qCorrectInput.placeholder = "'true' or 'false'"
-	} else if (type === 'FILL_BLANK') {
-		qCorrectInput.placeholder = 'Expected answer text'
-	} else {
-		qCorrectInput.placeholder = 'Pick from the options'
-	}
+function updateCorrectPlaceholder(type, opts) {
+	qCorrectInput.placeholder = correctAnswerPlaceholder(type, opts)
 }
 
 function addOptionRow(value = '') {
@@ -1472,7 +1467,7 @@ function openQuestionEdit(q) {
 	// re-enters it on save.
 	qCorrectInput.value = ''
 	syncOptionsForType(q.type, q.options)
-	qCorrectInput.placeholder = 'Re-enter the correct answer'
+	updateCorrectPlaceholder(q.type, { editing: true })
 	qSubmitBtn.textContent = 'Save Changes'
 }
 
@@ -1487,6 +1482,8 @@ function resetQuestionForm() {
 }
 
 qCancelBtn.addEventListener('click', resetQuestionForm)
+// The HTML default only suits one type — set it from the actual select.
+updateCorrectPlaceholder(qTypeSelect.value)
 
 qForm.addEventListener('submit', async (e) => {
 	e.preventDefault()
