@@ -2,6 +2,7 @@ import express from 'express'
 import pool from '../utils/db.js'
 import { distance_meters } from '../utils/geo.js'
 import { canAwardCard, awardCardIfEligible } from '../services/card_award.js'
+import { analyzeMovement } from '../services/movementTrust.js'
 
 const router = express.Router()
 
@@ -484,11 +485,22 @@ router.post('/submit', requireAuth, async (req, res) => {
 		try {
 			await conn.beginTransaction()
 
-			// 8a. Log the location check with REAL values (replaces the old
-			// hardcoded 0, 0, 0, 'VERIFIED').
+			// 8a. Movement trust check (Sprint 2 anti-cheat v1): compare
+			// against the player's previous verified check. FLAG ONLY — the
+			// result is stored for moderators and never changes the status,
+			// points or card outcome of this attempt.
+			const movement = await analyzeMovement(
+				conn,
+				user_id,
+				parseFloat(claimed_lat),
+				parseFloat(claimed_lng)
+			)
+
+			// Log the location check with REAL values, plus the movement
+			// trust result.
 			const [locCheck] = await conn.query(
-				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status, prev_check_id, travel_speed_ms, movement_flagged)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					user_id,
 					event_id,
@@ -498,6 +510,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 						? Math.round(distance)
 						: 0,
 					locationStatus,
+					movement.prevCheckId,
+					movement.travelSpeedMps,
+					movement.isSuspicious,
 				]
 			)
 

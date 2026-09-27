@@ -70,7 +70,7 @@ function makeConn(opts = {}) {
 			calls.rollbacks++
 		}),
 		release: jest.fn(),
-		query: jest.fn(async (sql) => {
+		query: jest.fn(async (sql, params) => {
 			const q = String(sql)
 				.trim()
 				.toLowerCase()
@@ -78,7 +78,12 @@ function makeConn(opts = {}) {
 
 			if (q.startsWith('insert into location_check_log')) {
 				calls.locationCheckInsert++
+				calls.locationCheckParams = params
 				return [{ insertId: 999, affectedRows: 1 }]
+			}
+			if (q.includes('from location_check_log')) {
+				// movement trust: the player's previous verified check
+				return [opts.prevCheck ? [opts.prevCheck] : []]
 			}
 			if (q.startsWith('insert into trivia_attempts')) {
 				calls.attemptInsert++
@@ -429,6 +434,84 @@ describe('POST /api/trivia/submit', () => {
 		// No points credited for a wrong answer.
 		expect(conn.calls.userPointsUpdate).toBe(0)
 		expect(conn.calls.pointTransactionInsert).toBe(0)
+	})
+
+	test('200 — impossible travel is FLAGGED but points are still awarded (flag only)', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ time_limit_s: 30 }]])
+			.mockResolvedValueOnce([[{ is_correct: 1 }]])
+			.mockResolvedValueOnce([
+				[{ option_id: 2, body: 'Pretoria' }],
+			])
+			.mockResolvedValueOnce([[sampleEvent()]])
+			.mockResolvedValueOnce([[]]) // canAwardCard
+
+		// Previous verified check ~2 km south, 30 s ago.
+		const conn = makeConn({
+			prevCheck: {
+				check_id: 555,
+				claimed_lat: '-26.2085',
+				claimed_lng: '28.0285',
+				elapsed_seconds: 30,
+			},
+		})
+		pool.getConnection.mockResolvedValue(conn)
+
+		await withServer(makeApp(), async (base) => {
+			const res = await fetch(`${base}/api/trivia/submit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event_id: 1,
+					question_id: 42,
+					selected_option_id: 2,
+					answer_time_ms: 1000,
+					claimed_lat: -26.1905,
+					claimed_lng: 28.0285,
+				}),
+			})
+			const body = await res.json()
+			expect(body.location_verified).toBe(true)
+			expect(body.points_awarded).toBeGreaterThan(0)
+		})
+
+		// [user, event, lat, lng, dist, status, prev_check_id, speed, flagged]
+		const p = conn.calls.locationCheckParams
+		expect(p[5]).toBe('VERIFIED') // status untouched
+		expect(p[6]).toBe(555)
+		expect(p[7]).toBeGreaterThan(2.5)
+		expect(p[8]).toBe(true)
+		expect(conn.calls.userPointsUpdate).toBe(1)
+	})
+
+	test('200 — first-ever check is logged unflagged with no previous check', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ time_limit_s: 30 }]])
+			.mockResolvedValueOnce([[{ is_correct: 0 }]])
+			.mockResolvedValueOnce([
+				[{ option_id: 2, body: 'Pretoria' }],
+			])
+			.mockResolvedValueOnce([[sampleEvent()]])
+
+		const conn = makeConn()
+		pool.getConnection.mockResolvedValue(conn)
+
+		await withServer(makeApp(), async (base) => {
+			await fetch(`${base}/api/trivia/submit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event_id: 1,
+					question_id: 42,
+					selected_option_id: 1,
+					claimed_lat: -26.1905,
+					claimed_lng: 28.0285,
+				}),
+			})
+		})
+
+		const p = conn.calls.locationCheckParams
+		expect(p.slice(6)).toEqual([null, null, false])
 	})
 
 	test('200 — timed out: is_correct false, correct_option_text still returned', async () => {

@@ -38,6 +38,7 @@ import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
 import battles_routes from './routes/battles.js'
 import placement_routes from './routes/placement.js'
+import movement_flags_routes from './routes/movement_flags.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
@@ -220,6 +221,7 @@ app.use('/api/trades', trades_routes)
 app.use('/api/zones', zones_routes)
 app.use('/api/battles', battles_routes)
 app.use('/api/placement', placement_routes)
+app.use('/api/movement-flags', movement_flags_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
@@ -362,12 +364,40 @@ async function ensure_placement_schema() {
 	}
 }
 
+async function ensure_movement_trust_schema() {
+	// Movement trust check (Sprint 2 anti-cheat v1). The flag lives on the
+	// location check it describes, next to prev_check_id/travel_speed_ms.
+	// Guarded like the other migrations: 1060 = column already there,
+	// 1061 = index already there.
+	const alters = [
+		`ALTER TABLE location_check_log ADD COLUMN movement_flagged BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE location_check_log ADD INDEX idx_lcl_movement_flagged (movement_flagged, checked_at)`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060 &&
+				err.code !== 'ER_DUP_KEYNAME' &&
+				err.errno !== 1061
+			)
+				console.warn(
+					'[movement trust migration]',
+					err.message
+				)
+		}
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
 	await ensure_placement_schema()
+	await ensure_movement_trust_schema()
 }
 
 async function seed_database() {
