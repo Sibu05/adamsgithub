@@ -1,4 +1,5 @@
 .env
+*.env
 .env.bak
 .secrets
 ca.pem
@@ -15,9 +16,9 @@ public/
 app/src/backend/cookies.txt
 coverage/
 app/src/backend/campus.geojson
-app/src/frontend/package-lock.json
 HANDOFF.md
 __pycache__
 campus.geojson
-package-lock.json
 HANDOFF.md
+app/src/backend/placement/map.osm
+app/src/backend/placement/scripts/wits_paths.geojson

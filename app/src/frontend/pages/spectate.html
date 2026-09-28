@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0"
+		/>
+		<title>A2A — Watch Live</title>
+		<link rel="stylesheet" href="../css/style.css" />
+		<link rel="stylesheet" href="../css/account-menu.css" />
+		<link rel="stylesheet" href="../css/battle.css" />
+		<link rel="stylesheet" href="../css/spectate.css" />
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="header-inner">
+				<a class="logo" href="../index.html">
+					<span class="logo-a">A</span>
+					<span class="logo-sep">→</span>
+					<span class="logo-a">A</span>
+					<span class="logo-sub">
+						Adamas to Aurum
+					</span>
+				</a>
+				<div class="header-right">
+					<span
+						class="admin-badge hidden"
+						id="user-badge"
+					></span>
+					<button
+						class="btn btn-sm btn-header hidden"
+						id="btn-logout"
+					>
+						Logout
+					</button>
+					<a
+						id="btn-signin"
+						href="../index.html"
+						class="btn btn-sm btn-header"
+					>
+						Sign In
+					</a>
+				</div>
+			</div>
+		</header>
+
+		<main class="main">
+			<div id="toast" class="toast" aria-live="polite"></div>
+
+			<div
+				id="list-error"
+				class="state-msg error hidden"
+			></div>
+
+			<div id="view-list">
+				<div class="page-header">
+					<div>
+						<h1 class="page-title">
+							Live Matches
+						</h1>
+						<p class="page-subtitle">
+							Pick a battle to watch —
+							spectators can't affect
+							the match.
+						</p>
+					</div>
+					<div class="spectate-header-actions">
+						<a
+							class="btn btn-ghost btn-sm"
+							href="./battle.html"
+						>
+							⚔ Back to Battle
+						</a>
+						<button
+							class="btn btn-ghost btn-sm"
+							id="btn-refresh"
+						>
+							Refresh
+						</button>
+					</div>
+				</div>
+
+				<div id="live-loading" class="state-msg">
+					Loading live matches…
+				</div>
+				<div
+					id="live-empty"
+					class="state-msg spectate-empty hidden"
+				>
+					<p>No live matches right now</p>
+					<button
+						class="btn btn-ghost btn-sm"
+						id="btn-demo"
+					>
+						Watch a demo match
+					</button>
+				</div>
+
+				<ul id="live-list" class="live-list"></ul>
+			</div>
+
+			<div id="view-watch" class="hidden">
+				<div class="watching-banner" id="watch-banner">
+					<span
+						class="watching-eye"
+						aria-hidden="true"
+					>
+						👁
+					</span>
+					<span>WATCHING</span>
+					<span
+						class="watching-demo-tag hidden"
+						id="watch-demo-tag"
+					>
+						DEMO
+					</span>
+				</div>
+
+				<div class="spectate-status-bar">
+					<h1
+						class="spectate-title"
+						id="watch-title"
+					></h1>
+					<div class="spectate-status-right">
+						<span
+							class="spectate-turn"
+							id="watch-turn"
+						></span>
+						<span
+							class="battle-turn-number"
+							id="watch-turn-number"
+						></span>
+					</div>
+				</div>
+
+				<div
+					id="watch-result"
+					class="spectate-result hidden"
+				>
+					<p id="watch-result-text"></p>
+				</div>
+
+				<section
+					class="battle-board spectate-board"
+					id="p1-board"
+					aria-label="Player 1 board"
+				>
+					<h2 class="battle-board-label">
+						<span class="spectate-side">
+							Player 1
+						</span>
+						<span id="p1-name"></span>
+					</h2>
+					<ul
+						class="battle-card-row"
+						id="p1-cards"
+					></ul>
+				</section>
+
+				<section
+					class="battle-board spectate-board"
+					id="p2-board"
+					aria-label="Player 2 board"
+				>
+					<h2 class="battle-board-label">
+						<span class="spectate-side">
+							Player 2
+						</span>
+						<span id="p2-name"></span>
+					</h2>
+					<ul
+						class="battle-card-row"
+						id="p2-cards"
+					></ul>
+				</section>
+
+				<h2 class="spectate-log-title">Recent moves</h2>
+				<ul class="spectate-log" id="watch-log"></ul>
+
+				<div class="form-actions">
+					<button
+						class="btn btn-ghost"
+						id="btn-stop"
+					>
+						Stop watching
+					</button>
+				</div>
+			</div>
+		</main>
+
+		<script type="module" src="../js/spectate.js"></script>
+	</body>
+</html>

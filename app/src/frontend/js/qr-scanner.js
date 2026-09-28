@@ -251,7 +251,7 @@ function showQrScanner(eventId, resolve, opts = {}) {
 		done = true
 
 		// Extract token — the QR encodes a URL like:
-		//   http://localhost:3000/pages/events.html?qr=<token>
+		// http://localhost:3000/pages/events.html?qr=<token>
 		// but we also handle a raw token string directly
 		let token = raw
 		try {

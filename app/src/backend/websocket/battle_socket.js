@@ -1,6 +1,10 @@
 import { WebSocketServer } from 'ws'
 import pool from '../utils/db.js'
-import { valid_user_cards, get_active_battle } from '../utils/battle.js'
+import {
+	BATTLE_DECK_NO_CARDS,
+	deck_violation,
+	get_active_battle,
+} from '../utils/battle.js'
 import {
 	load_battle_state,
 	get_battle_state,
@@ -16,8 +20,7 @@ import {
 	tick_effects,
 	TEAM_ACTIONS,
 } from './battle_effects.js'
-
-export const BATTLE_DECK_NO_CARDS = 5
+import { broadcast_to_spectators, clear_spectators } from './spectate_socket.js'
 
 /* A mapping from players user_id to the timeout interval
  */
@@ -70,6 +73,7 @@ async function update_battle_players(battle_id, payload) {
 
 	if (p1 && p1.ws.readyState === 1) p1.ws.send(payload)
 	if (p2 && p2.ws.readyState === 1) p2.ws.send(payload)
+	broadcast_to_spectators(battle_id, payload)
 }
 
 /* battle_id = null: connected to battle site and active in lobby
@@ -171,9 +175,9 @@ export async function save_player_deck(battle_id, user, deck) {
 		)
 	}
 
-	const is_valid = await valid_user_cards(user, deck)
-	if (!is_valid) {
-		throw new Error('Invalid card selection')
+	const violation = await deck_violation(user, deck)
+	if (violation) {
+		throw new Error(`Invalid card selection: ${violation}`)
 	}
 
 	const values = []
@@ -812,6 +816,7 @@ battleWss.on('connection', (ws, request) => {
 				clear_player_connection(state.player1_id)
 				clear_player_connection(state.player2_id)
 				clear_battle_state(battle_id)
+				clear_spectators(battle_id)
 
 				broadcast_lobby_presence()
 			} else if (msg.type === 'attack') {
@@ -1024,6 +1029,7 @@ battleWss.on('connection', (ws, request) => {
 						state.player2_id
 					)
 					clear_battle_state(battle_id)
+					clear_spectators(battle_id)
 
 					broadcast_lobby_presence()
 				}
@@ -1109,6 +1115,7 @@ battleWss.on('connection', (ws, request) => {
 				)
 				await persist_final_health(state)
 				clear_battle_state(player.battle_id)
+				clear_spectators(player.battle_id)
 			}, 120000) // 2 minutes
 			disconnected_players.set(player.user_id, timeout_id)
 		}

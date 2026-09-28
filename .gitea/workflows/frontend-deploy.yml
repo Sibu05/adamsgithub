@@ -2,8 +2,7 @@ name: Deploy Frontend to Cloudflare Pages
 
 on:
         push:
-                branches:
-                        - main
+                branches: [main]
 
 jobs:
         frontend-deploy:
@@ -17,8 +16,16 @@ jobs:
                         - name: Setup Node.js
                           uses: actions/setup-node@v4
                           with:
-                                  node-version: 20
+                                  node-version: '20'
                                   cache: 'npm'
+
+                        - name: Verify localhost references
+                          run: |
+                                  if grep -rl "localhost:3000" app/src/frontend --include="*.js"; then
+                                    exit 0
+                                  fi
+                                  echo "::error::found no localhost references - aborting deploy."
+                                  exit 1
 
                         - name: Point frontend at the production backend
                           run: bash ./switch-env.sh render app/src/frontend
@@ -28,8 +35,8 @@ jobs:
                         - name: Verify no localhost references remain
                           run: |
                                   if grep -rl "localhost:3000" app/src/frontend --include="*.js"; then
-                                          echo "::error::Found leftover localhost references after the URL swap - aborting deploy."
-                                          exit 1
+                                    echo "::error::Found leftover localhost references after the URL swap - aborting deploy."
+                                    exit 1
                                   fi
 
                         - name: Deploy to Cloudflare Pages

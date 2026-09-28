@@ -91,8 +91,14 @@ router.get('/events/:eventId/questions', async (req, res) => {
 			[req.params.eventId]
 		)
 
-		// Attach options for each question (without is_correct)
+		// Attach options for each question (without is_correct). A
+		// FILL_BLANK question's only "option" IS its answer, so it's never
+		// sent — this route is public.
 		for (const q of questions) {
+			if (q.type === 'FILL_BLANK') {
+				q.options = null
+				continue
+			}
 			const [options] = await pool.query(
 				`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
 				[q.id]
@@ -290,26 +296,59 @@ router.put(
 
 /**
  * DELETE /questions/:id
- * Deletes a question and its options (FK cascade handles trivia_options).
+ * Deletes a question and its options in one transaction. There is no FK
+ * cascade on trivia_options, so the options go first. A question players
+ * have already answered is kept (409): trivia_attempts and
+ * offline_trivia_queue reference it, and that history backs points and
+ * card awards.
  */
 router.delete(
 	'/questions/:id',
 	requireAuth,
 	requireEventAuthor,
 	async (req, res) => {
+		const conn = await pool.getConnection()
 		try {
-			const [result] = await pool.query(
-				'DELETE FROM trivia_questions WHERE question_id = ?',
+			await conn.beginTransaction()
+
+			const [existing] = await conn.query(
+				'SELECT question_id FROM trivia_questions WHERE question_id = ? FOR UPDATE',
 				[req.params.id]
 			)
-			if (!result.affectedRows) {
+			if (!existing.length) {
+				await conn.rollback()
 				return res
 					.status(404)
 					.json({ error: 'Question not found' })
 			}
+
+			const [[{ answered }]] = await conn.query(
+				`SELECT (SELECT COUNT(*) FROM trivia_attempts WHERE question_id = ?)
+				      + (SELECT COUNT(*) FROM offline_trivia_queue WHERE question_id = ?) AS answered`,
+				[req.params.id, req.params.id]
+			)
+			if (Number(answered) > 0) {
+				await conn.rollback()
+				return res.status(409).json({
+					error: 'Players have already answered this question, so it can’t be deleted (their attempt history depends on it). Edit it instead.',
+				})
+			}
+
+			await conn.query(
+				'DELETE FROM trivia_options WHERE question_id = ?',
+				[req.params.id]
+			)
+			await conn.query(
+				'DELETE FROM trivia_questions WHERE question_id = ?',
+				[req.params.id]
+			)
+			await conn.commit()
 			res.json({ message: 'Question deleted' })
 		} catch (err) {
+			await conn.rollback()
 			res.status(500).json({ error: err.message })
+		} finally {
+			conn.release()
 		}
 	}
 )

@@ -33,11 +33,14 @@ export function isModerator(user) {
  * Admins/authors go to the console; everyone else goes to the player
  * dashboard (events list).
  */
+// Players land on the main map ('/', index.html) — the same page Google
+// sign-in returns to (its callbackURL is the page the drawer was opened
+// on), so both login paths end up in one place.
 export function redirectAfterLogin(user) {
 	if (isAdmin(user)) {
 		window.location.href = '/pages/console.html'
 	} else {
-		window.location.href = '/pages/events.html'
+		window.location.href = '/'
 	}
 }
 
@@ -57,6 +60,7 @@ export function updateAuthNav(user) {
 		'nav-events',
 		'nav-collection',
 		'nav-battle',
+		'nav-spectate',
 		'nav-leaderboard',
 	].map((id) => document.getElementById(id))
 

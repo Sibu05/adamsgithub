@@ -73,9 +73,10 @@ physically on campus.
 
 ## Verification
 
-- `npm test` (`node --experimental-vm-modules node_modules/.bin/jest`): **7 passed test suites, 59 passed tests** (auth helpers, location, day/night schedule, backend services).
+- `npm run test:ci` (`node --experimental-vm-modules node_modules/.bin/jest --ci --coverage`): **19 passed test suites, 207 passed tests** — `All 83.43%` / `frontend/js 91.05%` / `backend/routes 80.31%` (was 7/59 in Sprint 1). Frontend map suites: `campus-style 94.9%` (`isInsideCampus`, `createCampusStyle`, `applyChromeTheme`), `geolocation`, `daynight`.
 - `npm run format:check`: 100% compliant with Prettier formatting.
+- **Canonical docs now published at:** `Adamas2Aurum-Documentation/docs/implementation/map-system.md` (Docusaurus, includes this file + updated coverage). This `MAP.md` kept as app-repo quick reference.
 
 ## AI Declaration
 
-This update and accompanying documentation were developed with the assistance of AI tooling (Antigravity). AI was used to diagnose and resolve session termination bugs, audit and overhaul the real-time GPS tracking and proximity systems, implement automated unit tests for auth helpers, and format codebase assets. All contributions were verified against the project's automated test suite and code style standards.
+This update and accompanying documentation were developed with the assistance of AI tooling (Antigravity + Muse Spark via Opencode). AI was used to diagnose and resolve session termination bugs, audit and overhaul the real-time GPS tracking and proximity systems, implement automated unit tests for auth helpers, campus-style, and coverage badges, and format codebase assets. All contributions were verified against the project's automated test suite (`npm run test:ci`) and code style standards.

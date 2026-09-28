@@ -10,6 +10,14 @@
 		<link rel="stylesheet" href="../css/style.css" />
 		<link rel="stylesheet" href="../css/account-menu.css" />
 		<link rel="stylesheet" href="../css/console-tabs.css" />
+		<link rel="stylesheet" href="../css/placement-console.css" />
+
+		<!-- MapLibre GL JS — only used by the Placement tab's map -->
+		<link
+			href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css"
+			rel="stylesheet"
+		/>
+		<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 	</head>
 	<body>
 		<header class="site-header">
@@ -24,7 +32,7 @@
 				</a>
 				<nav class="header-nav" id="header-nav">
 					<a
-						href="events.html"
+						href="/"
 						class="nav-link hidden"
 						id="nav-events"
 					>
@@ -251,6 +259,12 @@
 					>
 						Moderation
 					</button>
+					<button
+						class="tab-btn"
+						data-tab="placement"
+					>
+						Placement
+					</button>
 				</nav>
 
 				<!-- ═══════════════════════════════════════════
@@ -390,6 +404,22 @@
 									</option>
 								</select>
 							</div>
+							<label
+								class="toolbar-toggle"
+								for="toggle-past-popups"
+								title="Pop-ups the rotation job has retired or archived. Hidden by default; still stored for history and analytics."
+							>
+								<input
+									type="checkbox"
+									id="toggle-past-popups"
+								/>
+								Show past
+								pop-ups
+								<span
+									class="section-count"
+									id="past-popups-count"
+								></span>
+							</label>
 						</div>
 
 						<div id="event-list"></div>
@@ -965,7 +995,7 @@
 														id="q-correct"
 														type="text"
 														list="q-option-list"
-														placeholder="For true/false use 'true' or 'false'"
+														placeholder="Type one of the options above exactly"
 													/>
 													<datalist
 														id="q-option-list"
@@ -2528,6 +2558,224 @@
 					</div>
 				</div>
 				<!-- /tab-moderation -->
+				PLACEMENT TAB
+				════════════════════════════════════════════ -->
+				<div id="tab-placement" class="hidden">
+					<div class="page-header">
+						<h1 class="page-title">
+							Procedural Placement
+						</h1>
+						<p class="page-subtitle">
+							Auto-placed pop-up
+							events along the campus
+							path graph — generate
+							new ones or run a full
+							rotation on demand.
+						</p>
+					</div>
+
+					<div class="placement-layout">
+						<div
+							class="form-card"
+							style="padding: 0"
+						>
+							<div
+								id="placement-map"
+								style="
+									height: 560px;
+									border-radius: var(
+										--radius-lg
+									);
+									overflow: hidden;
+								"
+							></div>
+						</div>
+
+						<div class="placement-side">
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Live
+									pop-ups
+								</h2>
+								<p
+									id="placement-live-count"
+									style="
+										font-size: 1.6rem;
+										font-weight: 800;
+										color: var(
+											--accent
+										);
+										margin: 0.25rem
+											0
+											0;
+									"
+								>
+									— / —
+								</p>
+
+								<div
+									style="
+										display: flex;
+										gap: 0.5rem;
+										margin-top: 0.85rem;
+										flex-wrap: wrap;
+									"
+								>
+									<button
+										class="btn btn-primary"
+										id="btn-placement-generate"
+									>
+										Generate
+										now
+									</button>
+									<button
+										class="btn btn-ghost"
+										id="btn-placement-rotate"
+									>
+										Rotate
+										now
+									</button>
+								</div>
+								<p
+									id="placement-action-msg"
+									class="hidden"
+									style="
+										margin: 0.6rem
+											0
+											0;
+										font-size: 0.8rem;
+									"
+								></p>
+								<p
+									id="placement-question-warning"
+									class="placement-warning hidden"
+									role="alert"
+								></p>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Config
+								</h2>
+								<div
+									id="placement-config-list"
+									style="
+										margin-top: 0.5rem;
+										font-size: 0.85rem;
+									"
+								></div>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Active
+									events
+								</h2>
+								<ul
+									id="placement-events-list"
+									style="
+										margin-top: 0.25rem;
+										list-style: none;
+										padding: 0;
+									"
+								></ul>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Recent
+									runs
+								</h2>
+								<table
+									style="
+										width: 100%;
+										border-collapse: collapse;
+										margin-top: 0.5rem;
+										font-size: 0.78rem;
+									"
+								>
+									<thead>
+										<tr
+											style="
+												text-align: left;
+												color: var(
+													--text-muted
+												);
+											"
+										>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Run
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Started
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Status
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+													text-align: right;
+												"
+											>
+												Retired
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+													text-align: right;
+												"
+											>
+												Created
+											</th>
+										</tr>
+									</thead>
+									<tbody
+										id="placement-runs-body"
+									></tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+				</div>
+				<!-- /tab-placement -->
 			</div>
 			<!-- /console-content -->
 		</main>
@@ -2681,5 +2929,6 @@
 		</div>
 
 		<script type="module" src="../js/console.js"></script>
+		<script type="module" src="../js/placement-console.js"></script>
 	</body>
 </html>

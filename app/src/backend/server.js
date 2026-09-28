@@ -34,19 +34,28 @@ import sync_routes from './routes/sync.js'
 import campaign_routes from './routes/campaigns.js'
 import analytics_routes from './routes/analytics.js'
 import moderation_routes from './routes/moderation.js'
+import trades_routes from './routes/trades.js'
+import zones_routes from './routes/zones.js'
+import qr_routes from './routes/qr.js'
+import battles_routes from './routes/battles.js'
+import placement_routes from './routes/placement.js'
+import movement_flags_routes from './routes/movement_flags.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
 import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
-
-import qr_routes from './routes/qr.js'
+import { log_buffer } from './utils/logs.js'
+import { startRotationScheduler } from './placement/rotation_job.js'
+import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
+import { resolve_better_auth_user } from './utils/better_auth_sync.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 const PORT = process.env.PORT || 3000
 
+app.set('trust proxy', 1)
 app.use(express.json())
 const allowed_origins = [
 	'http://localhost:8055',
@@ -54,6 +63,7 @@ const allowed_origins = [
 	'http://127.0.0.1:5173',
 	'http://localhost:3000',
 	'http://127.0.0.1:3000',
+	'https://website.adamas2aurum.workers.dev',
 ]
 if (process.env.FRONTEND_URL) allowed_origins.push(process.env.FRONTEND_URL)
 
@@ -69,6 +79,18 @@ app.use(
 		credentials: true,
 	})
 )
+
+if (!process.env.SESSION_SECRET) {
+	const msg =
+		'SESSION_SECRET is not set — sessions are signed with the public dev fallback secret, so anyone can forge a session cookie. Set SESSION_SECRET in the environment.'
+	if (process.env.NODE_ENV === 'production') {
+		console.error(
+			`\n${'!'.repeat(72)}\n[SECURITY] ${msg}\n${'!'.repeat(72)}\n`
+		)
+	} else {
+		console.warn(`[session] ${msg}`)
+	}
+}
 
 const MySQLStore = mySQLSession(session)
 const sessionStore = new MySQLStore(
@@ -88,7 +110,9 @@ const session_middleware = session({
 	saveUninitialized: false,
 	cookie: {
 		httpOnly: true,
-		secure: false,
+		secure: process.env.NODE_ENV === 'production',
+		sameSite:
+			process.env.NODE_ENV === 'production' ? 'none' : 'lax',
 		maxAge: 1000 * 60 * 60 * 24, // 24 hours
 	},
 })
@@ -131,40 +155,44 @@ app.use(async (req, res, next) => {
 
 	// 2. Better Auth session (Google OAuth)
 	try {
-		const bSession = await auth.api.getSession({
-			headers: fromNodeHeaders(req.headers),
-		})
+		const bSession = await Promise.race([
+			auth.api.getSession({
+				headers: fromNodeHeaders(req.headers),
+			}),
+			new Promise((_, reject) =>
+				setTimeout(
+					() =>
+						reject(
+							new Error(
+								'Better Auth timeout'
+							)
+						),
+					3000
+				)
+			),
+		])
 		if (bSession?.user) {
-			const [users] = await pool.query(
-				'SELECT user_id, name, email, avatar_url, points FROM users WHERE email = ?',
-				[bSession.user.email]
+			// Matched by Google account id, not email alone — see
+			// utils/better_auth_sync.js.
+			const resolved = await resolve_better_auth_user(
+				pool,
+				bSession.user
 			)
-			if (users.length) {
-				req.user = users[0]
+			if (resolved.conflict) {
+				req.auth_conflict = resolved.conflict
 			} else {
-				// First-time Google user — sync into our users table
-				const [result] = await pool.query(
-					`INSERT INTO users (provider_id, email, name, avatar_url, points)
-           VALUES (?, ?, ?, ?, 0)`,
-					[
-						`betterauth:${bSession.user.id}`,
-						bSession.user.email,
-						bSession.user.name,
-						bSession.user.image,
-					]
-				)
-				const [newUsers] = await pool.query(
-					'SELECT user_id, name, email, avatar_url, points FROM users WHERE user_id = ?',
-					[result.insertId]
-				)
-				req.user = newUsers[0]
+				req.user = resolved.user
+				// Keep the express-session cookie in sync so existing code that reads
+				// req.session.user.user_id continues to work for Google-OAuth users.
+				req.session.user = req.user
 			}
-			// Keep the express-session cookie in sync so existing code that reads
-			// req.session.user.user_id continues to work for Google-OAuth users.
-			req.session.user = req.user
 		}
 	} catch (err) {
 		// Silently continue for unauthenticated requests
+		console.warn(
+			'Better Auth session resolution skipped/failed:',
+			err.message
+		)
 	}
 	next()
 })
@@ -174,9 +202,12 @@ app.use('/api/events', pool_routes)
 app.use('/api/events', event_routes)
 app.use('/api/cards', card_routes)
 app.use('/api/trivia', trivia_routes)
-// User Story 6 — question authoring. Mounted at /api so the single
-// router can serve both /api/events/:eventId/questions and /api/questions/:id.
-app.use('/api', question_routes)
+app.get('/api/logs', (req, res) => {
+	if (req.query.format === 'json') {
+		return res.json({ logs: log_buffer })
+	}
+	res.type('text/plain').send(log_buffer.join('\n'))
+})
 
 // User Story 7 — global points leaderboard. Public read; the "/me"
 // sub-route is the only part that requires a session.
@@ -189,6 +220,11 @@ app.use('/api/trivia', sync_routes)
 app.use('/api/campaigns', campaign_routes)
 app.use('/api/analytics', analytics_routes)
 app.use('/api/moderation', moderation_routes)
+app.use('/api/trades', trades_routes)
+app.use('/api/zones', zones_routes)
+app.use('/api/battles', battles_routes)
+app.use('/api/placement', placement_routes)
+app.use('/api/movement-flags', movement_flags_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
@@ -203,11 +239,19 @@ app.get('/api/health', async (req, res) => {
 // Get current authenticated user (used by frontend checkAuthSession)
 // ---------------------------------------------------------------------------
 app.get('/api/me', async (req, res) => {
+	if (!req.user?.user_id && req.auth_conflict) {
+		// Google sign-in refused (email belongs to a PIN account).
+		return res.status(409).json({ error: req.auth_conflict })
+	}
 	if (!req.user?.user_id) {
 		return res.status(401).json({ error: 'Not authenticated' })
 	}
 	res.json(req.user)
 })
+
+// User Story 6 — question authoring. Mounted at /api so the single
+// router can serve both /api/events/:eventId/questions and /api/questions/:id.
+app.use('/api', question_routes)
 
 // ---------------------------------------------------------------------------
 // Static file serving — backend serves the frontend so everything runs
@@ -247,6 +291,12 @@ app.get('/pages/battle.html', (_req, res) => {
 })
 app.get('/pages/leaderboard.html', (_req, res) => {
 	res.sendFile(path.join(pagesDir, 'leaderboard.html'))
+})
+app.get('/pages/logs.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'logs.html'))
+})
+app.get('/pages/spectate.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'spectate.html'))
 })
 
 // ---------------------------------------------------------------------------
@@ -521,12 +571,87 @@ async function ensure_moderation_schema() {
 	}
 }
 
+async function ensure_placement_schema() {
+	// Procedural event placement (Sprint 3). Guarded the same way as
+	// ensure_curation_schema — additive ALTERs, safe to re-run every
+	// startup, 1060/ER_DUP_FIELDNAME means the column is already there.
+	const alters = [
+		`ALTER TABLE events ADD COLUMN is_procedural BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE events ADD COLUMN placement_zone VARCHAR(64) NULL`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060
+			)
+				console.warn(
+					'[placement migration]',
+					err.message
+				)
+		}
+	}
+}
+
+async function ensure_movement_trust_schema() {
+	// Movement trust check (Sprint 2 anti-cheat v1). The flag lives on the
+	// location check it describes, next to prev_check_id/travel_speed_ms.
+	// Guarded like the other migrations: 1060 = column already there,
+	// 1061 = index already there.
+	const alters = [
+		`ALTER TABLE location_check_log ADD COLUMN movement_flagged BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE location_check_log ADD INDEX idx_lcl_movement_flagged (movement_flagged, checked_at)`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060 &&
+				err.code !== 'ER_DUP_KEYNAME' &&
+				err.errno !== 1061
+			)
+				console.warn(
+					'[movement trust migration]',
+					err.message
+				)
+		}
+	}
+}
+
+async function warn_if_better_auth_tables_missing() {
+	// Read-only check. Better Auth doesn't create its own tables, and
+	// running its migration automatically here would also touch whatever
+	// shared/deployed DB this server points at — so it's an explicit step:
+	// `npm run db:migrate-auth`.
+	try {
+		const { tables, columns } =
+			await pending_better_auth_migrations(auth.options)
+		if (tables.length || columns.length) {
+			console.warn(
+				`[better-auth] Missing ${[...tables, ...columns].join(', ')} — Google and email sign-in will fail until you run: npm run db:migrate-auth`
+			)
+		}
+	} catch (err) {
+		console.warn(
+			'[better-auth] Could not check Better Auth tables:',
+			err.message
+		)
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
 	await ensure_moderation_schema()
+	await ensure_placement_schema()
+	await ensure_movement_trust_schema()
+	await warn_if_better_auth_tables_missing()
 }
 
 async function seed_database() {
@@ -567,6 +692,14 @@ try {
 	}
 	if (process.env.LOG_DB === 'true') {
 		await view_database()
+	}
+
+	// Always on — but never under Jest, where JEST_WORKER_ID is set. A
+	// real setInterval hitting a real (test) DB every tick has no place in
+	// a unit test run; startRotationScheduler itself is still exercised
+	// directly by rotation_job.test.js.
+	if (!process.env.JEST_WORKER_ID) {
+		startRotationScheduler(pool)
 	}
 } catch (err) {
 	console.error('error: ', err.message)

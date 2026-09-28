@@ -144,6 +144,9 @@ def main():
         info("Seeding the database")
         run_checked(npm, "run", "db:seed")
 
+        info("Creating Better Auth tables (Google / email sign-in)")
+        run_checked(npm, "run", "db:migrate-auth")
+
         print(
             "\nDatabase is up.\n\n"
             "Usage:\n"
