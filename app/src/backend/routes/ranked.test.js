@@ -12,7 +12,7 @@ const {
 	getActiveSeason,
 	applyRatingUpdate,
 	rolloverSeasonIfDue,
-} = await import('./rating.js')
+} = await import('./ranked.js')
 
 // ── Fixture state, mutated per-test ──────────────────────────
 
@@ -24,7 +24,11 @@ function dispatch(sql, params) {
 	if (q.startsWith('select * from seasons where is_active = true'))
 		return [state.activeSeason ? [state.activeSeason] : []]
 
-	if (q.startsWith('select rating, wins, losses from leaderboard_entries')) {
+	if (
+		q.startsWith(
+			'select rating, wins, losses from leaderboard_entries'
+		)
+	) {
 		const [seasonId, userId] = params
 		const entry = state.entries?.[`${seasonId}:${userId}`]
 		return [entry ? [entry] : []]
@@ -52,7 +56,11 @@ function dispatch(sql, params) {
 		return [{ insertId: 2 }]
 	}
 
-	if (q.startsWith('select user_id, rating from leaderboard_entries where season_id'))
+	if (
+		q.startsWith(
+			'select user_id, rating from leaderboard_entries where season_id'
+		)
+	)
 		return [state.oldSeasonEntries || []]
 
 	throw new Error(`Unexpected query: ${q}`)
@@ -61,7 +69,9 @@ function dispatch(sql, params) {
 beforeEach(() => {
 	state = {}
 	pool.query.mockReset()
-	pool.query.mockImplementation(async (sql, params) => dispatch(sql, params))
+	pool.query.mockImplementation(async (sql, params) =>
+		dispatch(sql, params)
+	)
 })
 
 // ── computeEloDelta — pure function ──────────────────────────
@@ -97,7 +107,9 @@ describe('computeEloDelta', () => {
 describe('getActiveSeason', () => {
 	test('returns the active season row', async () => {
 		state.activeSeason = { season_id: 1, name: 'Season 1' }
-		await expect(getActiveSeason(pool)).resolves.toEqual(state.activeSeason)
+		await expect(getActiveSeason(pool)).resolves.toEqual(
+			state.activeSeason
+		)
 	})
 
 	test('returns null when there is none', async () => {
@@ -238,7 +250,11 @@ describe('rolloverSeasonIfDue', () => {
 
 	test('does nothing to leaderboard_entries when the old season had no entries', async () => {
 		const past = new Date(Date.now() - 1000)
-		state.activeSeason = { season_id: 1, name: 'Season 1', ends_at: past.toISOString() }
+		state.activeSeason = {
+			season_id: 1,
+			name: 'Season 1',
+			ends_at: past.toISOString(),
+		}
 		state.oldSeasonEntries = []
 
 		await rolloverSeasonIfDue(pool)
