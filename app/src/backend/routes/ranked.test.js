@@ -12,7 +12,7 @@ const {
 	getActiveSeason,
 	applyRatingUpdate,
 	rolloverSeasonIfDue,
-} = await import('./ranked.js')
+} = await import('../services/rating.js')
 
 // ── Fixture state, mutated per-test ──────────────────────────
 
