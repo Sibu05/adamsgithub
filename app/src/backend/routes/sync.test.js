@@ -432,6 +432,41 @@ describe('POST /api/trivia/offline-attempts — per-attempt verification', () =>
 		expect(conn.calls.userPointsUpdates).toBe(0)
 	})
 
+	test('ACCEPTED replay of a completed event logs the attempt but awards 0 points', async () => {
+		const conn = makeConn({
+			event: validEvent(),
+			option: { is_correct: 1 },
+		})
+		// Prior counted win on this event.
+		const baseImpl = conn.query.getMockImplementation()
+		conn.query.mockImplementation(async (sql, params) => {
+			if (String(sql).toLowerCase().includes('had_prior_win'))
+				return [[{ had_prior_win: 1 }]]
+			return baseImpl(sql, params)
+		})
+		pool.getConnection.mockResolvedValue(conn)
+
+		const app = makeApp()
+		await withServer(app, async (base) => {
+			const res = await post(base, {
+				queued_attempts: [validAttempt()],
+			})
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body.results).toHaveLength(1)
+			expect(body.results[0].status).toBe('ACCEPTED')
+			expect(body.results[0].points_awarded).toBe(0)
+			expect(body.results[0].already_completed).toBe(true)
+		})
+
+		// Attempt + queue rows still logged, but no points move.
+		expect(conn.calls.triviaAttemptInserts).toBe(1)
+		expect(conn.calls.userPointsUpdates).toBe(0)
+		expect(conn.calls.pointTransactionInserts).toBe(0)
+		expect(conn.calls.offlineQueueInserts).toContain('ACCEPTED')
+		expect(conn.calls.commits).toBeGreaterThan(0)
+	})
+
 	test('ACCEPTED — happy path credits points and logs everything', async () => {
 		const conn = makeConn({
 			event: validEvent(),

@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
     name          VARCHAR(100)   NOT NULL,
     avatar_url    VARCHAR(500),
     points        INT            NOT NULL DEFAULT 0,
+    moderation_status ENUM('NONE','WARNED','RESTRICTED','SUSPENDED') NOT NULL DEFAULT 'NONE',
+    moderation_expires_at DATETIME NULL,
     created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

@@ -105,6 +105,12 @@ function isEventCompleted(eventId) {
 	return completedEventIds.has(String(eventId))
 }
 
+// Union of server truth (`completed` flag on GET /api/events for
+// logged-in players) and local wins — same rule as the events page.
+function isDoneEvent(dbEvent) {
+	return dbEvent.completed === true || isEventCompleted(dbEvent.event_id)
+}
+
 function markEventCompleted(eventId) {
 	completedEventIds.add(String(eventId))
 	try {
@@ -141,6 +147,23 @@ function applyNextSuggestedMarker() {
 	}
 }
 
+// Drop a finished stop immediately (no waiting for the 30s poll):
+// remove its pin, re-halo the next one, rebuild the radius discs.
+function removeStopPin(eventId) {
+	const i = stopMarkers.findIndex((s) => String(s.id) === String(eventId))
+	if (i < 0) return
+	stopMarkers[i].marker.remove()
+	stopMarkers.splice(i, 1)
+	applyNextSuggestedMarker()
+	renderProximityCircles(
+		stopMarkers.map((s) => ({
+			coordinates: [s.lng, s.lat],
+			radius_meters: s.radius_meters,
+		}))
+	)
+	refreshStopGlow()
+}
+
 let lastFlownNextSuggestedId = null
 
 function flyToNextSuggested() {
@@ -171,21 +194,27 @@ function flyToNextSuggested() {
  */
 async function fetchCampusEvents() {
 	try {
+		// credentials: logged-in players get a per-event `completed`
+		// flag; anonymous players get the plain list as before.
 		const res = await fetch(`${API_BASE}/api/events`, {
 			cache: 'no-store',
+			credentials: 'include',
 		})
 		if (!res.ok) return []
 		const dbEvents = await res.json()
+		// Completed stops disappear — ordering, pins, and circles all
+		// run on the undone list only.
+		const todoEvents = dbEvents.filter((e) => !isDoneEvent(e))
 		const coords = await get_player_location() // returns [latitude, longitude]
 		const loc = {
 			latitude: coords[0],
 			longitude: coords[1],
 		}
-		const { order } = suggestEventOrder(dbEvents, loc)
+		const { order } = suggestEventOrder(todoEvents, loc)
 		suggestedOrder = order
 		refreshNextSuggested()
-		if (Array.isArray(dbEvents) && dbEvents.length > 0) {
-			return dbEvents
+		if (Array.isArray(todoEvents) && todoEvents.length > 0) {
+			return todoEvents
 				.map((event) => ({
 					id: event.event_id,
 					name: event.title,
@@ -1154,6 +1183,7 @@ window.submitTriviaAnswer = async function (
 				markEventCompleted(eventId)
 				refreshNextSuggested()
 				flyToNextSuggested()
+				removeStopPin(eventId)
 			} else {
 				statusIcon = '❌'
 				statusText = 'Incorrect.'
@@ -1184,6 +1214,11 @@ window.submitTriviaAnswer = async function (
 				cardBlock = `<div style="margin-top:8px;font-size:0.8rem;color:#9ca3af;">You've already earned this event's card.</div>`
 			}
 
+			const replayHtml =
+				data.is_correct && data.already_completed
+					? `<div style="margin-top:8px;font-size:0.8rem;color:#9ca3af;">🎓 Practice run — you've already completed this event, no new points.</div>`
+					: ''
+
 			resultContainer.innerHTML = `
 				<div style="text-align:center;margin:8px 0 12px;">
 					<div style="font-size:2rem;line-height:1;">${statusIcon}</div>
@@ -1201,6 +1236,7 @@ window.submitTriviaAnswer = async function (
 					</div>
 				</div>
 				${cardBlock}
+				${replayHtml}
 			`
 		}
 	} catch (err) {
@@ -1310,6 +1346,8 @@ async function initializeApp() {
 						id: bld.id,
 						lng: bld.coordinates[0],
 						lat: bld.coordinates[1],
+						radius_meters:
+							bld.radius_meters,
 					})
 				})
 				applyNextSuggestedMarker()

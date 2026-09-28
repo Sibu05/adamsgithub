@@ -1994,17 +1994,20 @@
 				<!-- /tab-campaigns -->
 
 				<!-- ═══════════════════════════════════════════
-				     INSIGHTS TAB (stale + hard questions)
+				     INSIGHTS TAB (User Story 10: analytics dashboard)
+				     Engagement · Question difficulty · Card drop rates
+				     + legacy curation (stale + hard questions)
 				════════════════════════════════════════════ -->
 				<div id="tab-insights" class="hidden">
 					<div class="page-header">
 						<h1 class="page-title">
-							Curation Insights
+							Analytics Dashboard
 						</h1>
 						<p class="page-subtitle">
-							Questions everybody gets
-							wrong · Old events to
-							retire
+							Engagement per event ·
+							Question difficulty ·
+							Card drop rates ·
+							Curation
 						</p>
 					</div>
 					<div style="display: grid; gap: 1.5rem">
@@ -2017,6 +2020,338 @@
 								flex-wrap: wrap;
 							"
 						></div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Engagement
+										—
+										attempts
+										/
+										visits
+										per
+										event
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Which
+										locations
+										and
+										events
+										draw
+										players,
+										which
+										are
+										ignored.
+										Reads
+										existing
+										attempt
+										+
+										location
+										logs.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+								>
+									<label
+										for="engagement-sort"
+									>
+										Sort
+									</label>
+									<select
+										id="engagement-sort"
+										class="sort-select"
+									>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+										<option
+											value="unique_players-desc"
+										>
+											Most
+											players
+										</option>
+										<option
+											value="visits-desc"
+										>
+											Most
+											visits
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Highest
+											correct
+											rate
+										</option>
+										<option
+											value="correct_rate-asc"
+										>
+											Lowest
+											correct
+											rate
+										</option>
+										<option
+											value="title-asc"
+										>
+											Title
+											A–Z
+										</option>
+										<option
+											value="last_activity-desc"
+										>
+											Recently
+											active
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="engagement-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="engagement-list"
+								class="event-list"
+							></ul>
+							<div
+								id="engagement-empty"
+								class="state-msg hidden"
+							>
+								No engagement
+								data yet (no
+								attempts
+								logged).
+							</div>
+						</div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Question
+										difficulty
+										—
+										correct
+										rate
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Too
+										hard
+										(≥60%
+										wrong)
+										or
+										too
+										easy
+										(≥90%
+										correct)
+										to
+										be
+										worth
+										asking.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+									style="
+										display: flex;
+										gap: 0.5rem;
+										flex-wrap: wrap;
+									"
+								>
+									<select
+										id="difficulty-filter"
+										class="sort-select"
+										aria-label="Difficulty filter"
+									>
+										<option
+											value="all"
+										>
+											All
+											flags
+										</option>
+										<option
+											value="too_hard"
+										>
+											Too
+											hard
+										</option>
+										<option
+											value="too_easy"
+										>
+											Too
+											easy
+										</option>
+										<option
+											value="ok"
+										>
+											OK
+										</option>
+										<option
+											value="ignored"
+										>
+											Ignored
+											(0
+											attempts)
+										</option>
+									</select>
+									<select
+										id="difficulty-sort"
+										class="sort-select"
+										aria-label="Difficulty sort"
+									>
+										<option
+											value="correct_rate-asc"
+										>
+											Hardest
+											first
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Easiest
+											first
+										</option>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="difficulty-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="difficulty-list"
+								class="event-list"
+							></ul>
+							<div
+								id="difficulty-empty"
+								class="state-msg hidden"
+							>
+								No questions
+								match this
+								filter yet.
+							</div>
+						</div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Card
+										drop
+										rates
+										—
+										actual
+										vs
+										intended
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+										id="droprate-subtitle"
+									>
+										Actual
+										issuance
+										rate
+										per
+										card
+										vs
+										configured
+										pool
+										weight
+										/
+										rarity.
+									</p>
+								</div>
+								<button
+									class="btn btn-ghost btn-sm"
+									id="btn-droprate-refresh"
+									type="button"
+								>
+									↻
+									Refresh
+								</button>
+							</div>
+							<div
+								id="droprate-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="droprate-list"
+								class="event-list"
+							></ul>
+							<div
+								id="droprate-empty"
+								class="state-msg hidden"
+							>
+								No cards issued
+								yet.
+							</div>
+						</div>
 						<div class="form-card">
 							<h2
 								class="page-title"

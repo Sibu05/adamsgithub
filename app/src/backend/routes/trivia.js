@@ -452,8 +452,13 @@ router.post('/submit', requireAuth, async (req, res) => {
 		//     points = max(1, round(reward × (1 - elapsed_fraction / 2)))
 		//   Timeouts and incorrect answers always earn 0 regardless of speed
 		//   or location — points require all three: correct, on time, verified.
+		//   Points are also ONCE-ONLY per event: a replay of an already-
+		//   completed event earns 0 (practice mode). The prior-win check
+		//   runs inside the transaction below and zeroes this out.
 		const baseReward = event?.point_reward || 10
-		const pointsAwarded =
+		let hadPriorWin = false
+		let isReplayWin = false
+		let pointsAwarded =
 			isCorrect && locationVerified && !timedOutFinal
 				? Math.max(
 						1,
@@ -484,7 +489,32 @@ router.post('/submit', requireAuth, async (req, res) => {
 		try {
 			await conn.beginTransaction()
 
-			// 8a. Log the location check with REAL values (replaces the old
+			// 8a. Once-only points: has this player already logged a
+			// counted win on this event (verified correct attempt or
+			// card award)? Replays still log the attempt below but
+			// earn 0 points — checked here, before the insert, so the
+			// current attempt never counts itself as the prior win.
+			const [priorWinRows] = await conn.query(
+				`SELECT (EXISTS(
+					SELECT 1 FROM trivia_attempts ta
+					JOIN location_check_log l ON l.check_id = ta.location_check_id
+					WHERE ta.user_id = ? AND ta.event_id = ? AND ta.is_correct = 1
+					  AND l.status IN ('VERIFIED', 'FALLBACK_QR')
+				) OR EXISTS(
+					SELECT 1 FROM event_card_awards eca
+					WHERE eca.user_id = ? AND eca.event_id = ?
+				)) AS had_prior_win`,
+				[user_id, event_id, user_id, event_id]
+			)
+			hadPriorWin = Boolean(priorWinRows[0]?.had_prior_win)
+			if (hadPriorWin) pointsAwarded = 0
+			isReplayWin =
+				hadPriorWin &&
+				isCorrect &&
+				locationVerified &&
+				!timedOutFinal
+
+			// 8b. Log the location check with REAL values (replaces the old
 			// hardcoded 0, 0, 0, 'VERIFIED').
 			const [locCheck] = await conn.query(
 				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status)
@@ -501,7 +531,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 				]
 			)
 
-			// 8b. Award the card — once-only, at the player's speed bracket.
+			// 8c. Award the card — once-only, at the player's speed bracket.
 			// Only a correct, on-time, location-verified answer is eligible;
 			// wrong, timed-out, or out-of-range attempts never trigger
 			// issuance. awardCardIfEligible does the canAwardCard check
@@ -522,7 +552,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 							reason: 'NOT_A_WIN',
 						}
 
-			// 8c. Record the attempt itself, carrying the awarded card_id (or
+			// 8d. Record the attempt itself, carrying the awarded card_id (or
 			// NULL). This row is what canAwardCard later queries to answer
 			// "has this player ever won this event?" — so it MUST be inserted
 			// after, not before, the award check (see the ordering note above).
@@ -542,7 +572,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 				]
 			)
 
-			// 8d. Only touch the points ledger when points were actually
+			// 8e. Only touch the points ledger when points were actually
 			// awarded — avoids a redundant 0-point UPDATE. Note: points are
 			// awarded on every correct+verified answer, including retries for
 			// practice; only the CARD is once-only (the story's scope).
@@ -576,8 +606,8 @@ router.post('/submit', requireAuth, async (req, res) => {
 				'You were too far from this location for that attempt to count.'
 		} else if (isCorrect && award.awarded) {
 			message = `Correct! You earned ${pointsAwarded} points and a new card: ${award.card.name} (${award.card.rarity})!`
-		} else if (isCorrect && award.reason === 'ALREADY_EARNED') {
-			message = `Correct! You earned ${pointsAwarded} points. You've already earned this card — no new card this time.`
+		} else if (isReplayWin) {
+			message = `Correct! You've already completed this event — practice only, no new points.`
 		} else if (isCorrect) {
 			message = `Correct! You earned ${pointsAwarded} points.`
 		} else {
@@ -598,6 +628,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 			card_awarded: award.awarded, // user story 8 — was a new card issued this attempt?
 			awarded_card: award.card, // { card_id, name, image_url, rarity, category } | null
 			already_earned_card: award.reason === 'ALREADY_EARNED', // true on a winning retry-after-win
+			already_completed: isReplayWin, // replay of a completed event: practice only, 0 points
 			correct_option_id: correctOption?.option_id ?? null,
 			correct_option_text: correctOption?.body ?? null,
 			message,

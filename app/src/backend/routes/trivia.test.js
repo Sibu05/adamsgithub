@@ -465,4 +465,56 @@ describe('POST /api/trivia/submit', () => {
 			expect(body.correct_option_text).toBe('Pretoria')
 		})
 	})
+
+	test('200 — replay of a completed event: correct but 0 points (practice only)', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ time_limit_s: 30 }]]) // question
+			.mockResolvedValueOnce([[{ is_correct: 1 }]]) // option: correct
+			.mockResolvedValueOnce([
+				[{ option_id: 2, body: 'Pretoria' }],
+			]) // the correct option
+			.mockResolvedValueOnce([
+				[sampleEvent({ point_reward: 20 })],
+			]) // event
+			.mockResolvedValueOnce([[]]) // canAwardCard (via awardCardIfEligible)
+
+		const conn = makeConn()
+		// Prior counted win on this event.
+		const baseImpl = conn.query.getMockImplementation()
+		conn.query.mockImplementation(async (sql, params) => {
+			if (String(sql).toLowerCase().includes('had_prior_win'))
+				return [[{ had_prior_win: 1 }]]
+			return baseImpl(sql, params)
+		})
+		pool.getConnection.mockResolvedValue(conn)
+
+		const app = makeApp()
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/trivia/submit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					event_id: 1,
+					question_id: 42,
+					selected_option_id: 2,
+					answer_time_ms: 1000,
+					claimed_lat: -26.1905,
+					claimed_lng: 28.0285,
+				}),
+			})
+			expect(res.status).toBe(200)
+			const body = await res.json()
+
+			expect(body.is_correct).toBe(true)
+			expect(body.points_awarded).toBe(0)
+			expect(body.already_completed).toBe(true)
+			expect(body.message).toMatch(/already completed/i)
+		})
+
+		// Attempt still logged for the audit trail, but no points move.
+		expect(conn.calls.attemptInsert).toBe(1)
+		expect(conn.calls.userPointsUpdate).toBe(0)
+		expect(conn.calls.pointTransactionInsert).toBe(0)
+		expect(conn.calls.commits).toBeGreaterThan(0)
+	})
 })

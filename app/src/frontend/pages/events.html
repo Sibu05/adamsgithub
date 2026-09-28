@@ -247,6 +247,49 @@
 				gap: 0.3rem;
 			}
 
+			/* ── Next-up banner (first undone event) ─────────── */
+			.sidebar-next {
+				background: linear-gradient(
+					135deg,
+					var(--accent),
+					var(--accent-light)
+				);
+				color: #fff;
+				border-radius: var(--radius);
+				padding: 0.75rem 0.9rem;
+				cursor: pointer;
+				box-shadow: 0 2px 8px rgba(12, 36, 97, 0.3);
+				transition: box-shadow var(--transition);
+			}
+			.sidebar-next:hover {
+				box-shadow: 0 4px 14px rgba(12, 36, 97, 0.45);
+			}
+			.sidebar-next.done {
+				background: linear-gradient(
+					135deg,
+					#15803d,
+					#22c55e
+				);
+				cursor: default;
+			}
+			.sidebar-next-title {
+				font-size: 0.875rem;
+				font-weight: 700;
+				margin-bottom: 0.2rem;
+			}
+			.sidebar-next-sub {
+				font-size: 0.75rem;
+				opacity: 0.9;
+			}
+			.sidebar-next-progress {
+				margin-top: 0.35rem;
+				font-size: 0.72rem;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				opacity: 0.85;
+			}
+
 			/* ── Pokéstop markers (same as main map) ─────────────── */
 			.pokestop {
 				width: 46px;

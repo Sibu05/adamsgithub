@@ -258,6 +258,9 @@ tabButtons.forEach((btn) => {
 			tabInsights.classList.remove('hidden')
 			if (!elConsole.classList.contains('hidden')) {
 				loadInsightsOverview()
+				loadEngagement()
+				loadDifficulty()
+				loadDropRates()
 				loadHardQuestions()
 				loadStaleEvents()
 			}
@@ -2286,12 +2289,168 @@ async function loadInsightsOverview() {
 		const data = await res.json()
 		elOverview.innerHTML = `
 			<div style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Hard questions</div><div style="font-size:1.6rem;font-weight:800;color:var(--danger)">${data.hard_questions ?? 0}</div></div>
+			<div style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Too-easy questions</div><div style="font-size:1.6rem;font-weight:800;color:var(--success, #27ae60)">${data.easy_questions ?? '—'}</div></div>
 			<div style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Stale events</div><div style="font-size:1.6rem;font-weight:800;color:var(--accent)">${data.stale_events ?? 0}</div></div>
+			<div style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Attempts logged</div><div style="font-size:1.6rem;font-weight:800">${data.total_attempts ?? '—'}</div></div>
+			<div style="flex:1;min-width:140px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Cards issued</div><div style="font-size:1.6rem;font-weight:800">${data.total_awards ?? '—'}</div></div>
 			<div style="flex:2;min-width:220px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:0.85rem;"><div style="font-size:0.7rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted)">Events by curation</div><div style="font-size:0.82rem;margin-top:0.25rem;">${(data.statusCounts || []).map((r) => `${esc(r.status)}: ${r.count}`).join(' · ') || '—'}</div></div>`
 	} catch {
 		elOverview.textContent = 'Could not load overview.'
 	}
 }
+// ── User Story 10 — engagement view (attempts/visits per event, sortable) ──
+const elEngagementList = document.getElementById('engagement-list')
+const elEngagementLoading = document.getElementById('engagement-loading')
+const elEngagementEmpty = document.getElementById('engagement-empty')
+const elEngagementSort = document.getElementById('engagement-sort')
+
+async function loadEngagement() {
+	if (!elEngagementList) return
+	const [sort = 'attempts', order = 'desc'] = (
+		elEngagementSort?.value || 'attempts-desc'
+	).split('-')
+	elEngagementLoading?.classList.remove('hidden')
+	elEngagementEmpty?.classList.add('hidden')
+	elEngagementList.innerHTML = ''
+	try {
+		const res = await fetch(
+			`${API_BASE}/api/analytics/engagement?sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}&limit=50`,
+			{ credentials: 'include' }
+		)
+		if (!res.ok) throw new Error(`Server ${res.status}`)
+		const data = await res.json()
+		elEngagementLoading?.classList.add('hidden')
+		if (!data.length) {
+			elEngagementEmpty?.classList.remove('hidden')
+			return
+		}
+		data.forEach((ev) => {
+			const li = document.createElement('li')
+			li.className = 'event-card'
+			const rate =
+				ev.correct_rate == null
+					? '—'
+					: `${Math.round(ev.correct_rate * 100)}%`
+			const ignored =
+				ev.attempts === 0
+					? ' <span class="meta-pill">ignored</span>'
+					: ''
+			li.innerHTML = `<div class="event-card-body"><div class="event-card-title">${esc(ev.title)}${ignored}</div><div class="event-card-desc">${ev.attempts} attempts · ${ev.unique_players} players · ${ev.visits} visits (${ev.unique_visitors} visitors) · ${rate} correct${ev.last_activity ? ` · last ${esc(formatDT(ev.last_activity) || ev.last_activity)}` : ' · never attempted'}</div></div><div class="event-card-actions"><span class="meta-pill ${ev.is_active ? 'active' : ''}">${esc(ev.curation_status || (ev.is_active ? 'active' : 'inactive'))}</span></div>`
+			elEngagementList.appendChild(li)
+		})
+	} catch (err) {
+		elEngagementLoading?.classList.add('hidden')
+		showToast(err.message, 'error')
+	}
+}
+elEngagementSort?.addEventListener('change', loadEngagement)
+
+// ── User Story 10 — question difficulty (correct-rate, too easy + too hard) ──
+const elDifficultyList = document.getElementById('difficulty-list')
+const elDifficultyLoading = document.getElementById('difficulty-loading')
+const elDifficultyEmpty = document.getElementById('difficulty-empty')
+const elDifficultyFilter = document.getElementById('difficulty-filter')
+const elDifficultySort = document.getElementById('difficulty-sort')
+
+const DIFFICULTY_FLAG_STYLE = {
+	TOO_HARD: 'color:var(--danger);font-weight:700',
+	TOO_EASY: 'color:var(--success, #27ae60);font-weight:700',
+	OK: 'color:var(--text-muted)',
+	IGNORED: 'color:var(--text-muted);font-style:italic',
+}
+
+async function loadDifficulty() {
+	if (!elDifficultyList) return
+	const [sort = 'correct_rate', order = 'asc'] = (
+		elDifficultySort?.value || 'correct_rate-asc'
+	).split('-')
+	const flag = elDifficultyFilter?.value || 'all'
+	elDifficultyLoading?.classList.remove('hidden')
+	elDifficultyEmpty?.classList.add('hidden')
+	elDifficultyList.innerHTML = ''
+	try {
+		const res = await fetch(
+			`${API_BASE}/api/analytics/questions/difficulty?min_attempts=0&flag=${encodeURIComponent(flag)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}&limit=50`,
+			{ credentials: 'include' }
+		)
+		if (!res.ok) throw new Error(`Server ${res.status}`)
+		const data = await res.json()
+		elDifficultyLoading?.classList.add('hidden')
+		if (!data.length) {
+			elDifficultyEmpty?.classList.remove('hidden')
+			return
+		}
+		data.forEach((q) => {
+			const li = document.createElement('li')
+			li.className = 'q-item'
+			const rate =
+				q.correct_rate == null
+					? 'no attempts'
+					: `${Math.round(q.correct_rate * 100)}% correct (${q.correct}/${q.attempts})`
+			li.innerHTML = `<div><div class="q-item-text">${esc(q.text)}</div><div class="q-item-meta">${esc(q.event_title)} · ${esc(
+				String(q.type || '')
+					.replace('_', ' ')
+					.toLowerCase()
+			)} · ${q.attempts} attempts · ${esc(rate)} · <span style="${DIFFICULTY_FLAG_STYLE[q.flag] || ''}">${esc(q.flag.replace('_', ' '))}</span></div></div>`
+			elDifficultyList.appendChild(li)
+		})
+	} catch (err) {
+		elDifficultyLoading?.classList.add('hidden')
+		showToast(err.message, 'error')
+	}
+}
+elDifficultyFilter?.addEventListener('change', loadDifficulty)
+elDifficultySort?.addEventListener('change', loadDifficulty)
+
+// ── User Story 10 — card drop-rate view (actual vs configured) ──
+const elDropList = document.getElementById('droprate-list')
+const elDropLoading = document.getElementById('droprate-loading')
+const elDropEmpty = document.getElementById('droprate-empty')
+const elDropSubtitle = document.getElementById('droprate-subtitle')
+const btnDropRefresh = document.getElementById('btn-droprate-refresh')
+
+async function loadDropRates() {
+	if (!elDropList) return
+	elDropLoading?.classList.remove('hidden')
+	elDropEmpty?.classList.add('hidden')
+	elDropList.innerHTML = ''
+	try {
+		const res = await fetch(
+			`${API_BASE}/api/analytics/cards/drop-rates?limit=100`,
+			{ credentials: 'include' }
+		)
+		if (!res.ok) throw new Error(`Server ${res.status}`)
+		const data = await res.json()
+		elDropLoading?.classList.add('hidden')
+		if (elDropSubtitle)
+			elDropSubtitle.textContent = `${data.total_awards} total awards · pool weight ${data.total_weight} — actual issuance rate per card vs configured pool weight / rarity.`
+		const cards = data.cards || []
+		if (!cards.length) {
+			elDropEmpty?.classList.remove('hidden')
+			return
+		}
+		cards.forEach((c) => {
+			const li = document.createElement('li')
+			li.className = 'event-card'
+			const actual = `${(c.actual_rate * 100).toFixed(1)}%`
+			const expected =
+				c.expected_rate == null
+					? 'not in any pool'
+					: `${(c.expected_rate * 100).toFixed(1)}%`
+			const drift =
+				c.drift == null
+					? ''
+					: ` · drift ${c.drift > 0 ? '+' : ''}${(c.drift * 100).toFixed(1)}pp`
+			li.innerHTML = `<div class="event-card-body"><div class="event-card-title">${esc(c.name)} <span class="meta-pill">${esc(c.rarity)}</span></div><div class="event-card-desc">issued ${c.times_awarded}× (${actual} actual vs ${expected} expected${drift}) · weight ${c.configured_weight}${c.sample_copy_limit != null ? ` · copy limit ${c.sample_copy_limit}` : ''}</div></div>`
+			elDropList.appendChild(li)
+		})
+	} catch (err) {
+		elDropLoading?.classList.add('hidden')
+		showToast(err.message, 'error')
+	}
+}
+btnDropRefresh?.addEventListener('click', loadDropRates)
+
 async function loadHardQuestions() {
 	if (!elHardList) return
 	elHardLoading?.classList.remove('hidden')

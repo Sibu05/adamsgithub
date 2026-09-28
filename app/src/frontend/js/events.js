@@ -1,6 +1,7 @@
 import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
 import { distance } from './general.js'
+import { esc } from './utils.js'
 import { updateAuthNav, logout } from './auth-helpers.js'
 import { get_location_for_challenge } from './qr-scanner.js'
 import {
@@ -17,6 +18,47 @@ import {
 
 const AUTH_API = `${API_BASE}/api/auth`
 const EVENT_API = `${API_BASE}/api/events`
+
+// ── Completed events ────────────────────────────────────────────
+// The server is authoritative (a `completed` flag on GET /api/events
+// for logged-in players). This localStorage mirror — same key as
+// main.js — covers the instant after a win before the next fetch, and
+// keeps the landing-page "next suggested" halo consistent.
+const COMPLETED_EVENTS_KEY = 'wits-quest:completed-events'
+
+function loadCompletedEventIds() {
+	try {
+		const raw = localStorage.getItem(COMPLETED_EVENTS_KEY)
+		return new Set(raw ? JSON.parse(raw) : [])
+	} catch {
+		return new Set()
+	}
+}
+
+function isEventCompletedLocal(eventId) {
+	try {
+		return loadCompletedEventIds().has(String(eventId))
+	} catch {
+		return false
+	}
+}
+
+function markEventCompletedLocal(eventId) {
+	try {
+		const ids = loadCompletedEventIds()
+		ids.add(String(eventId))
+		localStorage.setItem(
+			COMPLETED_EVENTS_KEY,
+			JSON.stringify([...ids])
+		)
+	} catch {
+		// localStorage unavailable — server flag still applies on next fetch
+	}
+}
+
+function isEventDone(ev) {
+	return ev.completed === true || isEventCompletedLocal(ev.event_id)
+}
 
 // ── DOM ───────────────────────────────────────────────────────
 const btnLogout = document.getElementById('btn-logout')
@@ -261,9 +303,14 @@ function clearMarkers() {
 	activeMarkers.forEach((m) => m.remove())
 	activeMarkers = []
 	stopRefs.length = 0
-	// Keep sidebar header, remove event cards
+	if (activePopup) {
+		activePopup.remove()
+		activePopup = null
+	}
+	// Keep sidebar header, remove event cards + next-up banner
 	const cards = elSidebar.querySelectorAll('.sidebar-event')
 	cards.forEach((c) => c.remove())
+	elSidebar.querySelector('#sidebar-next')?.remove()
 }
 
 function makeStopMarker(ev, inRange) {
@@ -355,8 +402,9 @@ function circleCoords(lng, lat, radiusMeters, steps = 48) {
 }
 
 // Translucent trigger-radius discs under each stop (same as main map).
+// Re-renders on every load so discs for newly-completed events disappear.
 function renderProximityCircles(events) {
-	if (!map || map.getSource('event-radii')) return
+	if (!map) return
 	const features = events
 		.filter((ev) => {
 			const lng = parseFloat(ev.longitude)
@@ -377,10 +425,16 @@ function renderProximityCircles(events) {
 				],
 			},
 		}))
+	const collection = { type: 'FeatureCollection', features }
+	const existing = map.getSource('event-radii')
+	if (existing) {
+		existing.setData(collection)
+		return
+	}
 	if (!features.length) return
 	map.addSource('event-radii', {
 		type: 'geojson',
-		data: { type: 'FeatureCollection', features },
+		data: collection,
 	})
 	map.addLayer({
 		id: 'event-radii-fill',
@@ -431,13 +485,90 @@ function buildPopupHTML(ev, inRange, onCampus = false) {
 	`
 }
 
+// ── Next-up banner ────────────────────────────────────────────
+// Points the player at the nearest event they haven't done yet.
+function formatDistance(meters) {
+	if (meters == null || isNaN(meters)) return ''
+	if (meters < 1000) return `${Math.round(meters)}m away`
+	return `${(meters / 1000).toFixed(1)}km away`
+}
+
+function renderNextUp(undoneEvents, playerLoc, doneCount = 0) {
+	const header = elSidebar.querySelector('.sidebar-header')
+	if (!header) return
+	const banner = document.createElement('div')
+	banner.id = 'sidebar-next'
+
+	if (!undoneEvents.length) {
+		banner.className = 'sidebar-next done'
+		banner.innerHTML = `
+			<div class="sidebar-next-title">🎉 All caught up!</div>
+			<div class="sidebar-next-sub">You've completed every active event — new ones will appear here.</div>
+		`
+		header.after(banner)
+		return
+	}
+
+	const progress =
+		doneCount > 0
+			? `<div class="sidebar-next-progress">${doneCount} completed · ${undoneEvents.length} to go</div>`
+			: ''
+
+	let next = undoneEvents[0]
+	let nextDist = null
+	if (playerLoc) {
+		let best = Infinity
+		for (const ev of undoneEvents) {
+			const lat = parseFloat(ev.latitude)
+			const lng = parseFloat(ev.longitude)
+			if (isNaN(lat) || isNaN(lng)) continue
+			const d = distance(
+				{
+					latitude: playerLoc[0],
+					longitude: playerLoc[1],
+				},
+				{ latitude: lat, longitude: lng }
+			)
+			if (d < best) {
+				best = d
+				next = ev
+			}
+		}
+		nextDist = best === Infinity ? null : best
+	}
+
+	banner.className = 'sidebar-next'
+	banner.innerHTML = `
+		<div class="sidebar-next-title">➡️ Next up: ${esc(next.title)}</div>
+		<div class="sidebar-next-sub">${nextDist != null ? `${esc(formatDistance(nextDist))} · ` : ''}⚡ ${esc(String(next.point_reward))} pts · 📍 ${esc(String(next.radius_meters))}m — tap to go</div>
+		${progress}
+	`
+	banner.addEventListener('click', () => {
+		const lng = parseFloat(next.longitude)
+		const lat = parseFloat(next.latitude)
+		if (isNaN(lng) || isNaN(lat)) return
+		map.flyTo({ center: [lng, lat], zoom: 18, duration: 600 })
+		const ref = stopRefs.find(
+			(r) => r.ev.event_id === next.event_id
+		)
+		if (ref) openStopPopup(ref)
+	})
+	header.after(banner)
+}
+
 // ── Load events ───────────────────────────────────────────────
+// Completed events are hidden; the banner points at what's left.
 async function loadEvents() {
 	clearMarkers()
 	elError.classList.add('hidden')
 
 	try {
-		const res = await fetch(EVENT_API, { cache: 'no-store' })
+		// credentials: logged-in players get a per-event `completed`
+		// flag; anonymous players get the plain list as before.
+		const res = await fetch(EVENT_API, {
+			cache: 'no-store',
+			credentials: 'include',
+		})
 		if (!res.ok)
 			throw new Error(`Server responded with ${res.status}`)
 		const events = await res.json()
@@ -448,6 +579,15 @@ async function loadEvents() {
 			elError.textContent =
 				'No active events right now — check back later.'
 			elError.classList.remove('hidden')
+			return
+		}
+
+		const undone = events.filter((ev) => !isEventDone(ev))
+		const doneCount = events.length - undone.length
+
+		if (!undone.length) {
+			renderProximityCircles([])
+			renderNextUp([], null)
 			return
 		}
 
@@ -469,7 +609,7 @@ async function loadEvents() {
 			? isInsideCampus(playerLoc[1], playerLoc[0])
 			: false
 
-		for (const ev of events) {
+		for (const ev of undone) {
 			const lng = parseFloat(ev.longitude)
 			const lat = parseFloat(ev.latitude)
 			if (isNaN(lng) || isNaN(lat)) continue
@@ -527,8 +667,9 @@ async function loadEvents() {
 			addSidebarCard(ev, inRange, lng, lat)
 		}
 
-		renderProximityCircles(events)
+		renderProximityCircles(undone)
 		refreshAllStopsProximity()
+		renderNextUp(undone, playerLoc, doneCount)
 	} catch (err) {
 		elLoading.classList.add('hidden')
 		elError.textContent = `Could not load events — ${err.message}`
@@ -818,6 +959,13 @@ window._submitAnswer = async function (
 		const data = await res.json()
 		document.getElementById('trivia-overlay')?.remove()
 		showResultModal({ ...data, answer_time_ms: answerTimeMs })
+		// Counted win: hide this event and point at the next one.
+		// (location_verified matters — a correct-but-too-far answer
+		// does not count and must not hide the event.)
+		if (data.is_correct && data.location_verified) {
+			markEventCompletedLocal(eventId)
+			loadEvents()
+		}
 	} catch {
 		alert('Failed to submit answer.')
 	}
@@ -866,6 +1014,7 @@ function showResultModal(data) {
 		card_awarded,
 		awarded_card,
 		already_earned_card,
+		already_completed,
 		answer_time_ms,
 	} = data
 
@@ -933,6 +1082,13 @@ function showResultModal(data) {
 		</div>`
 	}
 
+	const replayHtml =
+		is_correct && already_completed
+			? `<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem;">
+			🎓 Practice run — you've already completed this event, no new points.
+		</div>`
+			: ''
+
 	const overlay = document.createElement('div')
 	overlay.id = 'result-overlay'
 	overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.5);
@@ -953,7 +1109,7 @@ function showResultModal(data) {
 				}
 			</div>
 			<div style="padding:1.25rem 1.5rem;">
-				${pointsHtml}${correctHtml}${cardHtml}
+				${pointsHtml}${correctHtml}${cardHtml}${replayHtml}
 				<button id="result-close" style="width:100%;background:var(--accent);color:#fff;
 					border:none;border-radius:var(--radius);padding:0.6rem 1rem;
 					font-size:0.875rem;font-weight:600;cursor:pointer;font-family:var(--font-body);">
