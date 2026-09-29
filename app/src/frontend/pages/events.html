@@ -846,7 +846,10 @@
 				attachHelpButton,
 				currentPageKey,
 			} from '../js/help-modal.js'
-			import { announceEvent, speak } from '../js/voice-guide.js'
+			import {
+				announceEvent,
+				speak,
+			} from '../js/voice-guide.js'
 			import { eventState } from '../js/event-status.js'
 
 			// Help button — content chosen from the current URL.
@@ -864,10 +867,13 @@
 
 				const ev = window.__a2a_get_event?.(eventId)
 				if (!ev) {
-					speak('Sorry, I could not find that event.')
+					speak(
+						'Sorry, I could not find that event.'
+					)
 					return
 				}
-				const player = window.__a2a_get_player_lnglat?.()
+				const player =
+					window.__a2a_get_player_lnglat?.()
 				const state = eventState(ev, player)
 				announceEvent(ev, state)
 			})

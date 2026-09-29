@@ -114,9 +114,7 @@ export function helpPages() {
  */
 export function buildHelpModalHTML(pageKey) {
 	const { title, body } = helpContentFor(pageKey)
-	const items = body
-		.map((line) => `<li>${line}</li>`)
-		.join('')
+	const items = body.map((line) => `<li>${line}</li>`).join('')
 	return `
 		<div class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
 			<div class="help-modal-inner">
