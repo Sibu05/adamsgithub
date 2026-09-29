@@ -9,6 +9,7 @@ import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
 import { suggestEventOrder } from './graph.js'
 import { redirectAfterLogin, updateAuthNav, logout } from './auth-helpers.js'
+import { initFeedback } from './feedback.js'
 import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
@@ -1650,5 +1651,11 @@ function setupAuthDrawerHandlers() {
 
 document.addEventListener('DOMContentLoaded', () => {
 	setupAuthDrawerHandlers()
+	initFeedback({
+		getUser: () => currentUser,
+		openAuth: () => window.openAuthDrawer(),
+	})
+	if (new URLSearchParams(window.location.search).has('feedback'))
+		window.openFeedbackDrawer?.()
 	initializeApp()
 })

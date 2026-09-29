@@ -34,6 +34,7 @@ import sync_routes from './routes/sync.js'
 import campaign_routes from './routes/campaigns.js'
 import analytics_routes from './routes/analytics.js'
 import moderation_routes from './routes/moderation.js'
+import feedback_routes from './routes/feedback.js'
 import trades_routes from './routes/trades.js'
 import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
@@ -111,7 +112,8 @@ const session_middleware = session({
 	cookie: {
 		httpOnly: true,
 		secure: process.env.NODE_ENV === 'production',
-		sameSite: process.env.NODE_ENV === 'production' ? 'none': 'lax',
+		sameSite:
+			process.env.NODE_ENV === 'production' ? 'none' : 'lax',
 		maxAge: 1000 * 60 * 60 * 24, // 24 hours
 	},
 })
@@ -219,6 +221,7 @@ app.use('/api/trivia', sync_routes)
 app.use('/api/campaigns', campaign_routes)
 app.use('/api/analytics', analytics_routes)
 app.use('/api/moderation', moderation_routes)
+app.use('/api/feedback', feedback_routes)
 app.use('/api/trades', trades_routes)
 app.use('/api/zones', zones_routes)
 app.use('/api/battles', battles_routes)

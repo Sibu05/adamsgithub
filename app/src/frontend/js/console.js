@@ -68,6 +68,7 @@ const tabCards = document.getElementById('tab-cards')
 const tabCampaigns = document.getElementById('tab-campaigns')
 const tabInsights = document.getElementById('tab-insights')
 const tabModeration = document.getElementById('tab-moderation')
+const tabFeedback = document.getElementById('tab-feedback')
 
 // Sub-tabs (event edit view)
 const editLayout = document.getElementById('event-edit-layout')
@@ -160,6 +161,7 @@ function hideAllConsoleUI() {
 	tabCampaigns?.classList.add('hidden')
 	tabInsights?.classList.add('hidden')
 	tabModeration?.classList.add('hidden')
+	tabFeedback?.classList.add('hidden')
 
 	if (editLayout) editLayout.classList.add('hidden')
 
@@ -224,6 +226,7 @@ async function checkAccess() {
 		}
 
 		elConsole.classList.remove('hidden')
+		updateFeedbackTabCount()
 
 		// Activate events tab by default
 		const eventsTab = document.querySelector('[data-tab="events"]')
@@ -250,6 +253,7 @@ tabButtons.forEach((btn) => {
 		tabCampaigns?.classList.add('hidden')
 		tabInsights?.classList.add('hidden')
 		tabModeration?.classList.add('hidden')
+		tabFeedback?.classList.add('hidden')
 		const tab = btn.dataset.tab
 		if (tab === 'cards') {
 			tabCards.classList.remove('hidden')
@@ -277,6 +281,12 @@ tabButtons.forEach((btn) => {
 			if (!elConsole.classList.contains('hidden')) {
 				loadModerationQueue()
 				loadModerationActions()
+			}
+		} else if (tab === 'feedback') {
+			tabFeedback.classList.remove('hidden')
+			if (!elConsole.classList.contains('hidden')) {
+				setFeedbackView(fbView)
+				loadFeedback()
 			}
 		} else {
 			tabEvents.classList.remove('hidden')
@@ -2993,3 +3003,203 @@ modModalOverlay?.addEventListener('click', (e) => {
 	if (e.target === modModalOverlay) closeModModal()
 })
 modModalConfirm?.addEventListener('click', doModAction)
+
+// ============================================================
+// Player feedback inbox (Help & feedback reports)
+// ============================================================
+const fbList = document.getElementById('fb-list')
+const fbCount = document.getElementById('fb-count')
+const fbLoading = document.getElementById('fb-loading')
+const fbEmpty = document.getElementById('fb-empty')
+const fbError = document.getElementById('fb-error')
+const fbSearch = document.getElementById('fb-search')
+const btnFbRefresh = document.getElementById('btn-fb-refresh')
+
+let feedbackReports = []
+let fbView = 'NEW'
+
+const FB_STATUS_LABEL = {
+	NEW: 'New',
+	ACKNOWLEDGED: 'Acknowledged',
+	RESOLVED: 'Resolved',
+}
+
+function setFeedbackView(view) {
+	fbView = view
+	document.querySelectorAll('#fb-sub-tabs .mini-tab-btn').forEach((b) =>
+		b.classList.toggle('mini-tab-active', b.dataset.fbView === view)
+	)
+}
+
+function filterFeedback() {
+	if (!fbList) return
+	const q = (fbSearch?.value || '').trim().toLowerCase()
+	let visible = 0
+	;[...fbList.children].forEach((li) => {
+		const hit =
+			!q || (li.textContent || '').toLowerCase().includes(q)
+		li.classList.toggle('hidden', !hit)
+		if (hit) visible += 1
+	})
+	if (fbCount && q) {
+		fbCount.textContent = `${visible} of ${feedbackReports.length} reports match “${fbSearch.value.trim()}”`
+	} else if (fbCount && feedbackReports.length) {
+		fbCount.textContent =
+			`${feedbackReports.length} ${FB_STATUS_LABEL[fbView]?.toLowerCase() || ''} report${feedbackReports.length !== 1 ? 's' : ''}`.trim()
+	}
+}
+
+async function loadFeedback() {
+	if (!fbList) return
+	fbLoading?.classList.remove('hidden')
+	fbEmpty?.classList.add('hidden')
+	fbError?.classList.add('hidden')
+	fbList.innerHTML = ''
+	if (fbCount) fbCount.textContent = 'Loading…'
+	try {
+		const url =
+			fbView === 'ALL'
+				? `${API_BASE}/api/feedback`
+				: `${API_BASE}/api/feedback?status=${fbView}`
+		const res = await fetch(url, { credentials: 'include' })
+		if (!res.ok) {
+			if (res.status === 401)
+				throw new Error('Not authenticated')
+			if (res.status === 403)
+				throw new Error('Admin role required')
+			throw new Error(`Server ${res.status}`)
+		}
+		feedbackReports = await res.json()
+		fbLoading?.classList.add('hidden')
+		if (!feedbackReports.length) {
+			fbEmpty?.classList.remove('hidden')
+			if (fbCount)
+				fbCount.textContent =
+					`0 ${FB_STATUS_LABEL[fbView]?.toLowerCase() || ''} reports`.trim()
+			return
+		}
+		if (fbCount)
+			fbCount.textContent =
+				`${feedbackReports.length} ${FB_STATUS_LABEL[fbView]?.toLowerCase() || ''} report${feedbackReports.length !== 1 ? 's' : ''}`.trim()
+		feedbackReports.forEach((r) =>
+			fbList.appendChild(buildFeedbackCard(r))
+		)
+		filterFeedback()
+	} catch (err) {
+		fbLoading?.classList.add('hidden')
+		if (fbError) {
+			fbError.textContent = `Could not load feedback — ${err.message}`
+			fbError.classList.remove('hidden')
+		}
+		showToast(err.message, 'error')
+	}
+}
+
+function buildFeedbackCard(r) {
+	const li = document.createElement('li')
+	li.className = 'mod-card'
+	li.dataset.reportId = r.report_id
+	const catColor =
+		r.category === 'BUG'
+			? 'color:#ef4444'
+			: r.category === 'LOCATION'
+				? 'color:#f59e0b'
+				: 'color:var(--accent)'
+	const statusPill =
+		r.status === 'RESOLVED'
+			? '<span class="meta-pill">Resolved</span>'
+			: r.status === 'ACKNOWLEDGED'
+				? '<span class="meta-pill gold">Acknowledged</span>'
+				: '<span class="meta-pill" style="border-color:var(--accent);color:var(--accent);background:var(--accent-glow)">New</span>'
+	li.innerHTML = `<div class="mod-card-top"><div class="mod-user"><span class="mod-avatar">${esc((r.name || r.email || '?').trim().charAt(0).toUpperCase())}</span><div><div style="font-weight:700">${esc(r.title)}</div><div class="mod-history">${esc(r.name || r.email || 'unknown player')} · <span style="${catColor};font-weight:700">${esc(r.category)}</span> · ${esc(formatDT(r.created_at) || r.created_at)}</div></div></div><div>${statusPill}</div></div><div class="mod-evidence"><div class="mod-evidence-item"><span>${esc(r.body)}</span></div>${r.admin_note ? `<div class="mod-evidence-item"><span class="mod-evidence-type">Note</span><span>${esc(r.admin_note)}</span></div>` : ''}</div><div class="mod-actions"></div>`
+	const actions = li.querySelector('.mod-actions')
+	if (r.status === 'NEW') {
+		const ack = document.createElement('button')
+		ack.type = 'button'
+		ack.className = 'btn btn-ghost btn-sm'
+		ack.textContent = 'Acknowledge'
+		ack.addEventListener('click', () =>
+			triageFeedback(r.report_id, 'ACKNOWLEDGED', ack)
+		)
+		actions.appendChild(ack)
+	}
+	if (r.status !== 'RESOLVED') {
+		const resolve = document.createElement('button')
+		resolve.type = 'button'
+		resolve.className = 'btn btn-primary btn-sm'
+		resolve.textContent = 'Resolve'
+		resolve.addEventListener('click', () =>
+			triageFeedback(r.report_id, 'RESOLVED', resolve)
+		)
+		actions.appendChild(resolve)
+	}
+	return li
+}
+
+async function triageFeedback(reportId, status, btn) {
+	const original = btn?.textContent
+	try {
+		if (btn) {
+			btn.disabled = true
+			btn.textContent = 'Saving…'
+		}
+		const res = await fetch(
+			`${API_BASE}/api/feedback/${reportId}`,
+			{
+				method: 'PATCH',
+				credentials: 'include',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status }),
+			}
+		)
+		const data = await res.json().catch(() => ({}))
+		if (!res.ok)
+			throw new Error(data.error || `Server ${res.status}`)
+		showToast(`Report marked ${status.toLowerCase()}.`, 'success')
+		loadFeedback()
+		updateFeedbackTabCount()
+	} catch (err) {
+		showToast(err.message, 'error')
+		if (btn) {
+			btn.disabled = false
+			btn.textContent = original
+		}
+	}
+}
+
+document.querySelectorAll('#fb-sub-tabs .mini-tab-btn').forEach((btn) => {
+	btn.addEventListener('click', () => {
+		setFeedbackView(btn.dataset.fbView)
+		loadFeedback()
+	})
+})
+fbSearch?.addEventListener('input', filterFeedback)
+btnFbRefresh?.addEventListener('click', loadFeedback)
+
+// ============================================================
+// Feedback tab unread count (NEW reports). Plain text count on the
+// tab — no icons, matching the console's text-only style.
+// ============================================================
+const feedbackTabCount = document.getElementById('feedback-tab-count')
+
+async function updateFeedbackTabCount() {
+	if (!feedbackTabCount) return
+	try {
+		const res = await fetch(`${API_BASE}/api/feedback?status=NEW`, {
+			credentials: 'include',
+		})
+		if (!res.ok) return
+		const reports = await res.json()
+		if (!reports.length) {
+			feedbackTabCount.classList.add('hidden')
+		} else {
+			feedbackTabCount.textContent =
+				reports.length > 99
+					? '99+'
+					: String(reports.length)
+			feedbackTabCount.classList.remove('hidden')
+		}
+	} catch {
+		// Count just stays hidden when offline.
+	}
+}

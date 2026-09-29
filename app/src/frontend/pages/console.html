@@ -288,6 +288,16 @@
 					</button>
 					<button
 						class="tab-btn"
+						data-tab="feedback"
+					>
+						Feedback
+						<span
+							id="feedback-tab-count"
+							class="tab-count hidden"
+						></span>
+					</button>
+					<button
+						class="tab-btn"
 						data-tab="placement"
 					>
 						Placement
@@ -2706,6 +2716,104 @@
 					</div>
 				</div>
 				<!-- /tab-moderation -->
+
+				<!-- ═══════════════════════════════════════════
+				     FEEDBACK TAB (Help & feedback — player issue reports)
+				     NEW → ACKNOWLEDGED → RESOLVED triage queue
+				════════════════════════════════════════════ -->
+				<div id="tab-feedback" class="hidden">
+					<div
+						class="page-header"
+						style="
+							display: flex;
+							align-items: baseline;
+							justify-content: space-between;
+							flex-wrap: wrap;
+							gap: 1rem;
+						"
+					>
+						<div>
+							<h1 class="page-title">
+								Player Feedback
+							</h1>
+							<p
+								class="page-subtitle"
+								id="fb-count"
+							>
+								Loading…
+							</p>
+						</div>
+						<button
+							class="btn btn-ghost btn-sm"
+							id="btn-fb-refresh"
+						>
+							↻ Refresh
+						</button>
+					</div>
+					<nav
+						class="mini-tabs"
+						id="fb-sub-tabs"
+						aria-label="Feedback status"
+					>
+						<button
+							type="button"
+							class="mini-tab-btn mini-tab-active"
+							data-fb-view="NEW"
+						>
+							New
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="ACKNOWLEDGED"
+						>
+							Acknowledged
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="RESOLVED"
+						>
+							Resolved
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="ALL"
+						>
+							All
+						</button>
+						<input
+							type="search"
+							id="fb-search"
+							class="sort-select"
+							placeholder="Search title, player, text…"
+							aria-label="Search feedback reports"
+							style="
+								margin-left: auto;
+							"
+						/>
+					</nav>
+					<div id="fb-loading" class="state-msg">
+						Loading player reports…
+					</div>
+					<div
+						id="fb-empty"
+						class="state-msg hidden"
+					>
+						No reports in this state — inbox
+						zero.
+					</div>
+					<div
+						id="fb-error"
+						class="state-msg error hidden"
+					></div>
+					<ul
+						id="fb-list"
+						class="event-list"
+					></ul>
+				</div>
+				<!-- /tab-feedback -->
 
 				<!-- ═══════════════════════════════════════════
 				     PLACEMENT TAB

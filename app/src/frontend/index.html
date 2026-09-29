@@ -17,6 +17,7 @@
 		<link rel="stylesheet" href="../css/style.css" />
 		<link rel="stylesheet" href="/css/account-menu.css" />
 		<link rel="stylesheet" href="/css/event-panel.css" />
+		<link rel="stylesheet" href="/css/feedback.css" />
 		<style>
 			* {
 				box-sizing: border-box;
@@ -1533,6 +1534,106 @@
 			</div>
 
 			<div id="auth-drawer-status" class="auth-status"></div>
+		</div>
+
+		<!-- Help us improve (in-app feedback) -->
+		<div
+			id="feedback-overlay"
+			class="auth-overlay"
+			onclick="closeFeedbackDrawer()"
+		></div>
+		<div id="feedback-drawer" class="auth-drawer">
+			<button
+				class="close-btn"
+				onclick="closeFeedbackDrawer()"
+			>
+				&times;
+			</button>
+			<h2>Help us improve</h2>
+			<p class="drawer-subtitle">
+				Spotted something broken? Tell the team — it
+				lands straight in our inbox.
+			</p>
+
+			<div id="feedback-gate">
+				<p class="drawer-subtitle">
+					Sign in to send feedback so the team can
+					follow up with you.
+				</p>
+				<button
+					class="submit-btn"
+					id="feedback-signin-btn"
+					type="button"
+				>
+					Sign In / Register
+				</button>
+			</div>
+			<form id="feedback-report-form" class="hidden">
+				<div class="form-group">
+					<label for="feedback-category">
+						Category
+					</label>
+					<select id="feedback-category">
+						<option value="BUG">
+							Bug — something broke
+						</option>
+						<option value="ACCOUNT">
+							Account / login
+						</option>
+						<option value="LOCATION">
+							Location / GPS
+						</option>
+						<option value="CONTENT">
+							Event / question content
+						</option>
+						<option value="OTHER">
+							Other
+						</option>
+					</select>
+				</div>
+				<div class="form-group">
+					<label for="feedback-title">
+						Title
+					</label>
+					<input
+						type="text"
+						id="feedback-title"
+						placeholder="Short summary"
+						maxlength="200"
+						required
+					/>
+				</div>
+				<div class="form-group">
+					<label for="feedback-body">
+						What happened?
+					</label>
+					<textarea
+						id="feedback-body"
+						placeholder="What were you doing, what did you expect, what happened instead?"
+						maxlength="5000"
+						required
+					></textarea>
+				</div>
+				<button type="submit" class="submit-btn">
+					Send feedback
+				</button>
+			</form>
+
+			<div id="feedback-mine" class="feedback-mine hidden">
+				<h3>Your reports</h3>
+				<div
+					id="feedback-mine-empty"
+					class="state-msg hidden"
+				>
+					Nothing here yet.
+				</div>
+				<ul
+					id="feedback-mine-list"
+					class="feedback-mine-list"
+				></ul>
+			</div>
+
+			<div id="feedback-status" class="feedback-status"></div>
 		</div>
 
 		<script type="module" src="/js/auth-client.js"></script>

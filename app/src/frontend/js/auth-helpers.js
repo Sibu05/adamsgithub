@@ -245,6 +245,18 @@ function ensureAccountMenu(user) {
 			label: 'Settings',
 			soon: 'Settings are coming soon.',
 		},
+		{
+			icon: 'help-circle',
+			label: 'Help us improve',
+			action: () => {
+				if (
+					typeof window.openFeedbackDrawer ===
+					'function'
+				)
+					window.openFeedbackDrawer()
+				else window.location.href = '/?feedback=1'
+			},
+		},
 		{ divider: true },
 		{ icon: 'log-out', label: 'Logout', action: logout },
 		{

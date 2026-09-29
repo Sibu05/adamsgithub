@@ -28,6 +28,7 @@ TRUNCATE TABLE events;
 TRUNCATE TABLE admin_roles;
 TRUNCATE TABLE moderation_actions;
 TRUNCATE TABLE user_trust_scores;
+TRUNCATE TABLE feedback_reports;
 TRUNCATE TABLE users;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -238,3 +239,8 @@ VALUES (@mod_user_id, '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d
 
 INSERT IGNORE INTO admin_roles (user_id, role, granted_by)
 VALUES (@mod_user_id, 'MODERATOR', @admin_user_id);
+
+-- 24. FEEDBACK REPORTS (Help & feedback demo inbox)
+INSERT INTO feedback_reports (user_id, category, title, body, status) VALUES
+(@player_user_id, 'BUG', 'Map froze near Great Hall', 'Pins stopped loading after the third GPS fix. Refreshing fixed it.', 'NEW'),
+(2, 'LOCATION', 'Off-campus banner while on campus', 'Was standing at the Matrix but the banner said off campus for a minute.', 'ACKNOWLEDGED');

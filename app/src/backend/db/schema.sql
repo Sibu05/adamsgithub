@@ -566,4 +566,25 @@ CREATE TABLE IF NOT EXISTS placement_runs (
     error          TEXT
 );
 
+-- ============================================================
+--  FEEDBACK REPORTS  (Help & feedback — player issue reports)
+--
+--  Logged-in players file issues from the Help drawer on the main
+--  map. Admins triage them in the console Feedback tab:
+--  NEW → ACKNOWLEDGED → RESOLVED.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS feedback_reports (
+    report_id    INT         AUTO_INCREMENT PRIMARY KEY,
+    user_id      INT         NOT NULL,
+    category     ENUM('BUG','ACCOUNT','LOCATION','CONTENT','OTHER') NOT NULL DEFAULT 'OTHER',
+    title        VARCHAR(200) NOT NULL,
+    body         TEXT        NOT NULL,
+    status       ENUM('NEW','ACKNOWLEDGED','RESOLVED') NOT NULL DEFAULT 'NEW',
+    admin_note   TEXT,
+    created_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_fb_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+);
+
 SET FOREIGN_KEY_CHECKS = 1;

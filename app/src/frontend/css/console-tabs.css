@@ -237,6 +237,26 @@
 	background: var(--surface-2);
 }
 
+/* ── Tab unread count (Feedback: NEW reports) ── */
+.tab-count {
+	display: inline-block;
+	font-size: 0.68rem;
+	font-weight: 700;
+	padding: 0.1rem 0.45rem;
+	border-radius: 99px;
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	color: var(--text-muted);
+	margin-left: 0.3rem;
+	vertical-align: middle;
+}
+
+.tab-btn.tab-active .tab-count {
+	border-color: var(--accent);
+	color: var(--accent);
+	background: var(--accent-glow);
+}
+
 /* ── Mini sub-tabs (Insights / Moderation section jump, no scrolling) ── */
 .mini-tabs {
 	display: flex;
