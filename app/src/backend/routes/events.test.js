@@ -82,6 +82,70 @@ describe('GET /api/events (public)', () => {
 			expect(res.status).toBe(403)
 		})
 	})
+	test('anonymous list has no completion query and no flags', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ Field: 'curation_status' }]])
+			.mockResolvedValueOnce([
+				[{ event_id: 1, title: 'Pub' }],
+			])
+		const app = makeApp(null)
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/events`)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body[0]).not.toHaveProperty('completed')
+		})
+		expect(pool.query).toHaveBeenCalledTimes(2)
+	})
+	test('logged-in list carries completed flags from verified wins', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ Field: 'curation_status' }]])
+			.mockResolvedValueOnce([
+				[
+					{ event_id: 1, title: 'Done' },
+					{ event_id: 2, title: 'Todo' },
+				],
+			])
+			.mockResolvedValueOnce([
+				[
+					{
+						event_id: 1,
+						completed_at:
+							'2026-09-01 10:00:00',
+					},
+				],
+			])
+		const app = makeApp({ user_id: 7 })
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/events`)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(2)
+			expect(body[0].completed).toBe(true)
+			expect(body[0].completed_at).toBe('2026-09-01 10:00:00')
+			expect(body[1].completed).toBe(false)
+		})
+		// completion query joins attempts to verified location checks only
+		const completionSql = pool.query.mock.calls[2][0]
+		expect(completionSql).toMatch(/location_check_log/)
+		expect(completionSql).toMatch(/VERIFIED/)
+		expect(completionSql).toMatch(/event_card_awards/)
+	})
+	test('logged-in list still 200 when completion query fails (fail-open)', async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ Field: 'curation_status' }]])
+			.mockResolvedValueOnce([
+				[{ event_id: 1, title: 'Pub' }],
+			])
+			.mockRejectedValueOnce(new Error('no such table'))
+		const app = makeApp({ user_id: 7 })
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/events`)
+			expect(res.status).toBe(200)
+			const body = await res.json()
+			expect(body).toHaveLength(1)
+		})
+	})
 })
 
 describe('POST /api/events', () => {
