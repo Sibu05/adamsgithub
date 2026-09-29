@@ -286,6 +286,80 @@ tabButtons.forEach((btn) => {
 	})
 })
 
+// ── INSIGHTS / MODERATION SECTION NAV ──
+// One section visible at a time so admins jump instead of scrolling.
+// "All" restores the full stacked view. Null-safe: markup may vary.
+function setInsightsView(view) {
+	const panels = document.querySelectorAll('[data-insights-panel]')
+	if (!panels.length) return
+	document.querySelectorAll('#insights-sub-tabs .mini-tab-btn').forEach(
+		(b) =>
+			b.classList.toggle(
+				'mini-tab-active',
+				b.dataset.insightsView === view
+			)
+	)
+	panels.forEach((p) => {
+		p.classList.toggle(
+			'hidden',
+			view !== 'all' && p.dataset.insightsPanel !== view
+		)
+	})
+}
+
+function setModerationView(view) {
+	const panels = document.querySelectorAll('[data-mod-panel]')
+	if (!panels.length) return
+	document.querySelectorAll('#mod-sub-tabs .mini-tab-btn').forEach((b) =>
+		b.classList.toggle(
+			'mini-tab-active',
+			b.dataset.modView === view
+		)
+	)
+	panels.forEach((p) => {
+		p.classList.toggle(
+			'hidden',
+			view !== 'all' && p.dataset.modPanel !== view
+		)
+	})
+}
+
+function filterModerationQueue(query) {
+	if (!modList) return
+	const q = (query || '').trim().toLowerCase()
+	let visible = 0
+	;[...modList.children].forEach((li) => {
+		const hit =
+			!q || (li.textContent || '').toLowerCase().includes(q)
+		li.classList.toggle('hidden', !hit)
+		if (hit) visible += 1
+	})
+	if (modCount && q) {
+		modCount.textContent = `${visible} of ${modQueue.length} flagged players match “${query.trim()}”`
+	} else if (modCount && modQueue.length) {
+		modCount.textContent = `${modQueue.length} flagged player${modQueue.length !== 1 ? 's' : ''} — sorted by lowest trust first`
+	}
+}
+
+document.querySelectorAll('#insights-sub-tabs .mini-tab-btn').forEach((btn) => {
+	btn.addEventListener('click', () =>
+		setInsightsView(btn.dataset.insightsView)
+	)
+})
+document.querySelectorAll('#mod-sub-tabs .mini-tab-btn').forEach((btn) => {
+	btn.addEventListener('click', () =>
+		setModerationView(btn.dataset.modView)
+	)
+})
+document.getElementById('mod-search')?.addEventListener('input', (e) => {
+	setModerationView('queue')
+	filterModerationQueue(e.target.value)
+})
+
+// Apply single-section defaults on load so first paint isn't a long scroll.
+setInsightsView('overview')
+setModerationView('queue')
+
 // ── EVENTS CRUD ──
 const EVENT_SECTION_ORDER = [
 	'draft',

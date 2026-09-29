@@ -237,6 +237,49 @@
 	background: var(--surface-2);
 }
 
+/* ── Mini sub-tabs (Insights / Moderation section jump, no scrolling) ── */
+.mini-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.4rem;
+	margin-bottom: 1.25rem;
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	padding: 0.5rem 0;
+	background: var(--bg, #fff);
+}
+
+.mini-tab-btn {
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	border-radius: 99px;
+	padding: 0.35rem 0.85rem;
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition:
+		background var(--transition, 181ms ease),
+		color var(--transition, 181ms ease),
+		border-color var(--transition, 181ms ease);
+}
+
+.mini-tab-btn:hover {
+	color: var(--text);
+}
+
+.mini-tab-btn.mini-tab-active {
+	border-color: var(--accent);
+	color: var(--accent);
+	background: var(--accent-glow);
+}
+
+#mod-search {
+	max-width: 260px;
+}
+
 /* ── Collapsible list sections ── */
 .list-section {
 	margin-bottom: 1.5rem;

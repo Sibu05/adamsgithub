@@ -941,7 +941,8 @@ async function checkAuthSession() {
 	}
 
 	const btnLogout = document.getElementById('btn-logout')
-	if (btnLogout) {
+	if (btnLogout && !btnLogout.dataset.bound) {
+		btnLogout.dataset.bound = 'true'
 		btnLogout.addEventListener('click', handleLogout)
 	}
 }
@@ -1358,6 +1359,10 @@ window.submitTriviaAnswer = async function (
  * stops always visible, challenge attempts campus-gated on tap.
  */
 async function initializeApp() {
+	// Auth first (fire-and-forget): resolve the header before the map and
+	// GPS finish loading, so the nav never flashes the wrong state while
+	// locating. The map-load handler below re-syncs once pins render.
+	checkAuthSession().catch(() => {})
 	map = new maplibregl.Map({
 		container: 'map',
 		style: createCampusStyle(),
@@ -1488,7 +1493,7 @@ async function initializeApp() {
 		// 2b. (World tiles render their own buildings; stops are the
 		// tappable gameplay layer and are always rendered above.)
 
-		// 3. Silent auth check
+		// 3. Re-sync auth (the early check already resolved the header)
 		await checkAuthSession().catch(() => {})
 
 		// 4. 🎯 resumes GPS follow and flies to the player, wherever

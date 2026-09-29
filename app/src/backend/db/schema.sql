@@ -467,7 +467,6 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 
 -- ============================================================
-<-- ============================================================
 --  20. USER TRUST SCORES  (User Story 5 — mocked trust-score table)
 --
 --  Mocked per-user trust scores that front the moderation queue.
