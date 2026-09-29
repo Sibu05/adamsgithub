@@ -300,6 +300,9 @@ app.get('/pages/logs.html', (_req, res) => {
 app.get('/pages/spectate.html', (_req, res) => {
 	res.sendFile(path.join(pagesDir, 'spectate.html'))
 })
+app.get('/pages/terms.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'terms.html'))
+})
 
 // ---------------------------------------------------------------------------
 // Database initialization (unchanged from dev)
