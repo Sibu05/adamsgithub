@@ -5,6 +5,11 @@ import { createLoginLimiter } from '../utils/login_limiter.js'
 
 const router = express.Router()
 
+// Current Terms of Use + Privacy Policy version. Keep in sync with
+// TERMS_VERSION in app/src/frontend/js/constants.js — acceptance
+// records store this string, and a bump re-prompts every player.
+export const TERMS_VERSION = '1.0'
+
 // Failed username + PIN logins, per ip+username and per ip.
 export const loginLimiter = createLoginLimiter()
 
@@ -111,7 +116,8 @@ router.post('/login', async (req, res) => {
 
 // REGISTER ROUTE
 router.post('/register', async (req, res) => {
-	const { name, email, password, pin } = req.body
+	const { name, email, password, pin, terms_accepted, terms_version } =
+		req.body
 	const inputPin = pin || password
 	const userEmail = email ? email.trim().toLowerCase() : ''
 
@@ -133,6 +139,11 @@ router.post('/register', async (req, res) => {
 		return res
 			.status(400)
 			.json({ error: 'PIN must be 4 to 6 digits' })
+	}
+	if (terms_accepted !== true || terms_version !== TERMS_VERSION) {
+		return res.status(400).json({
+			error: `You must accept the Terms of Use (v${TERMS_VERSION}) to create an account`,
+		})
 	}
 
 	try {
@@ -159,6 +170,11 @@ router.post('/register', async (req, res) => {
 		await pool.query(
 			'INSERT INTO user_credentials (user_id, pin_hash) VALUES (?, ?)',
 			[userId, hashedPin]
+		)
+
+		await pool.query(
+			'REPLACE INTO user_terms_acceptances (user_id, terms_version) VALUES (?, ?)',
+			[userId, TERMS_VERSION]
 		)
 
 		req.session.user = {
@@ -204,6 +220,56 @@ router.get('/me', async (req, res) => {
 			name,
 			email,
 			roles: rows.map((r) => r.role),
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// TERMS STATUS ROUTE — has this session's user accepted current terms?
+router.get('/terms-status', async (req, res) => {
+	if (!req.session?.user?.user_id) {
+		return res.status(401).json({ error: 'Not authenticated' })
+	}
+	try {
+		const [rows] = await pool.query(
+			'SELECT terms_version, accepted_at FROM user_terms_acceptances WHERE user_id = ?',
+			[req.session.user.user_id]
+		)
+		const accepted =
+			rows.length > 0 &&
+			rows[0].terms_version === TERMS_VERSION
+		res.json({
+			accepted,
+			accepted_version: rows[0]?.terms_version || null,
+			accepted_at: rows[0]?.accepted_at || null,
+			current_version: TERMS_VERSION,
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// ACCEPT TERMS ROUTE — records acceptance (Google sign-ins accept here,
+// PIN registrations accept inline via POST /register).
+router.post('/accept-terms', async (req, res) => {
+	if (!req.session?.user?.user_id) {
+		return res.status(401).json({ error: 'Not authenticated' })
+	}
+	const { version } = req.body
+	if (version !== TERMS_VERSION) {
+		return res.status(400).json({
+			error: `version must be the current Terms of Use (v${TERMS_VERSION})`,
+		})
+	}
+	try {
+		await pool.query(
+			'REPLACE INTO user_terms_acceptances (user_id, terms_version) VALUES (?, ?)',
+			[req.session.user.user_id, TERMS_VERSION]
+		)
+		res.json({
+			accepted: true,
+			version: TERMS_VERSION,
 		})
 	} catch (err) {
 		res.status(500).json({ error: err.message })

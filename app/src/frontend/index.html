@@ -1524,6 +1524,40 @@
 							autocomplete="new-password"
 						/>
 					</div>
+					<div class="form-group">
+						<label
+							for="drawer-signup-terms"
+							style="
+								display: flex;
+								gap: 0.5rem;
+								align-items: flex-start;
+								font-size: 0.82rem;
+							"
+						>
+							<input
+								type="checkbox"
+								id="drawer-signup-terms"
+								required
+								style="
+									width: auto;
+									margin-top: 0.2rem;
+								"
+							/>
+							<span>
+								I agree to the
+								<a
+									href="/pages/terms.html"
+									target="_blank"
+									rel="noopener"
+								>
+									Terms of
+									Use &
+									Privacy
+									Policy
+								</a>
+							</span>
+						</label>
+					</div>
 					<button
 						type="submit"
 						class="submit-btn"
@@ -1534,6 +1568,55 @@
 			</div>
 
 			<div id="auth-drawer-status" class="auth-status"></div>
+			<p
+				class="drawer-subtitle"
+				style="text-align: center; margin-top: 1rem"
+			>
+				<a
+					href="/pages/terms.html"
+					target="_blank"
+					rel="noopener"
+				>
+					Terms of Use & Privacy Policy
+				</a>
+			</p>
+		</div>
+
+		<!-- Terms acceptance gate (blocking modal for sign-ins
+		     missing current-terms acceptance, e.g. Google users) -->
+		<div id="terms-overlay" class="auth-overlay"></div>
+		<div id="terms-modal" class="auth-drawer">
+			<h2>Terms update</h2>
+			<p class="drawer-subtitle">
+				Please accept the current Terms of Use & Privacy
+				Policy to continue playing.
+			</p>
+			<p class="drawer-subtitle">
+				<a
+					href="/pages/terms.html"
+					target="_blank"
+					rel="noopener"
+				>
+					Read the Terms of Use & Privacy Policy
+					(v1.0)
+				</a>
+			</p>
+			<div id="terms-modal-status" class="auth-status"></div>
+			<button
+				class="submit-btn"
+				id="btn-accept-terms"
+				type="button"
+			>
+				Accept & continue
+			</button>
+			<button
+				class="btn btn-ghost"
+				id="btn-decline-terms"
+				type="button"
+				style="width: 100%; margin-top: 0.5rem"
+			>
+				Log out
+			</button>
 		</div>
 
 		<!-- Help us improve (in-app feedback) -->

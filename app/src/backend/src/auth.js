@@ -18,18 +18,22 @@ export const auth = betterAuth({
 	secret: process.env.BETTER_AUTH_SECRET,
 	appName: 'Adamas2Aurum',
 	socialProviders: buildSocialProviders(),
-	advanced:{
+	advanced: {
 		userSecureCookies: false,
 	},
 	emailAndPassword: {
 		enabled: true,
 		sendResetPassword: async ({ user, url, token }) => {
-			console.log('\n========================================')
+			console.log(
+				'\n========================================'
+			)
 			console.log('  PASSWORD RESET REQUEST')
 			console.log('  User:  ' + user.email)
 			console.log('  Token: ' + token)
 			console.log('  URL:   ' + url)
-			console.log('========================================\n')
+			console.log(
+				'========================================\n'
+			)
 		},
 	},
 	user: {

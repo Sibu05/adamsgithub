@@ -262,6 +262,41 @@ describe('POST /api/auth/register', () => {
 			expect(res.status).toBe(400)
 		})
 	})
+	test('400 when terms are not accepted', async () => {
+		const app = makeApp({})
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/auth/register`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					name: 'A',
+					email: 'alice',
+					pin: '1234',
+				}),
+			})
+			expect(res.status).toBe(400)
+			expect((await res.json()).error).toMatch(/Terms of Use/)
+		})
+		expect(pool.query).not.toHaveBeenCalled()
+	})
+	test('400 when the terms version is stale', async () => {
+		const app = makeApp({})
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/auth/register`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					name: 'A',
+					email: 'alice',
+					pin: '1234',
+					terms_accepted: true,
+					terms_version: '0.1',
+				}),
+			})
+			expect(res.status).toBe(400)
+		})
+		expect(pool.query).not.toHaveBeenCalled()
+	})
 	test('400 when the username is taken', async () => {
 		pool.query.mockResolvedValueOnce([[{ user_id: 1 }]])
 		const app = makeApp({})
@@ -273,6 +308,8 @@ describe('POST /api/auth/register', () => {
 					name: 'A',
 					email: 'alice',
 					pin: '1234',
+					terms_accepted: true,
+					terms_version: '1.0',
 				}),
 			})
 			expect(res.status).toBe(400)
@@ -338,6 +375,7 @@ describe('POST /api/auth/register', () => {
 			.mockResolvedValueOnce([[]])
 			.mockResolvedValueOnce([{ insertId: 9 }])
 			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
 			.mockResolvedValueOnce([[]])
 		await withServer(makeApp({}), async (base) => {
 			const res = await fetch(`${base}/api/auth/register`, {
@@ -347,6 +385,8 @@ describe('POST /api/auth/register', () => {
 					name: 'Bob',
 					email: 'bobby',
 					pin: '482913',
+					terms_accepted: true,
+					terms_version: '1.0',
 				}),
 			})
 			expect(res.status).toBe(201)
@@ -358,11 +398,12 @@ describe('POST /api/auth/register', () => {
 		expect(stored).not.toContain('482913')
 		expect(stored).not.toBe(hash('482913'))
 	})
-	test('201 creates user', async () => {
+	test('201 creates user and records terms acceptance', async () => {
 		pool.query
 			.mockResolvedValueOnce([[]]) // existing
 			.mockResolvedValueOnce([{ insertId: 2 }]) // insert users
 			.mockResolvedValueOnce([{ affectedRows: 1 }]) // insert creds
+			.mockResolvedValueOnce([{ affectedRows: 1 }]) // terms acceptance
 			.mockResolvedValueOnce([[]]) // roles
 		const session = {}
 		const app = makeApp(session)
@@ -374,11 +415,132 @@ describe('POST /api/auth/register', () => {
 					name: 'Bob',
 					email: 'bob',
 					pin: '1234',
+					terms_accepted: true,
+					terms_version: '1.0',
 				}),
 			})
 			expect(res.status).toBe(201)
 			expect(session.user.email).toBe('bob')
 		})
+		const [sql, [userId, version]] = pool.query.mock.calls[3]
+		expect(sql).toMatch(/user_terms_acceptances/)
+		expect(userId).toBe(2)
+		expect(version).toBe('1.0')
+	})
+})
+
+describe('GET /api/auth/terms-status', () => {
+	beforeEach(() => pool.query.mockReset())
+	test('401 when no session', async () => {
+		const app = makeApp({})
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/auth/terms-status`)
+			expect(res.status).toBe(401)
+		})
+	})
+	test('accepted:false when no record', async () => {
+		pool.query.mockResolvedValueOnce([[]])
+		const app = makeApp({ user: { user_id: 5 } })
+		await withServer(app, async (base) => {
+			const res = await fetch(`${base}/api/auth/terms-status`)
+			expect(res.status).toBe(200)
+			const data = await res.json()
+			expect(data.accepted).toBe(false)
+			expect(data.current_version).toBe('1.0')
+		})
+	})
+	test('accepted:false on a stale version', async () => {
+		pool.query.mockResolvedValueOnce([
+			[{ terms_version: '0.1', accepted_at: '2026-01-01' }],
+		])
+		const app = makeApp({ user: { user_id: 5 } })
+		await withServer(app, async (base) => {
+			const data = await (
+				await fetch(`${base}/api/auth/terms-status`)
+			).json()
+			expect(data.accepted).toBe(false)
+			expect(data.accepted_version).toBe('0.1')
+		})
+	})
+	test('accepted:true on the current version', async () => {
+		pool.query.mockResolvedValueOnce([
+			[{ terms_version: '1.0', accepted_at: '2026-09-29' }],
+		])
+		const app = makeApp({ user: { user_id: 5 } })
+		await withServer(app, async (base) => {
+			const data = await (
+				await fetch(`${base}/api/auth/terms-status`)
+			).json()
+			expect(data.accepted).toBe(true)
+		})
+	})
+})
+
+describe('POST /api/auth/accept-terms', () => {
+	beforeEach(() => pool.query.mockReset())
+	test('401 when no session', async () => {
+		const app = makeApp({})
+		await withServer(app, async (base) => {
+			const res = await fetch(
+				`${base}/api/auth/accept-terms`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type':
+							'application/json',
+					},
+					body: JSON.stringify({
+						version: '1.0',
+					}),
+				}
+			)
+			expect(res.status).toBe(401)
+		})
+	})
+	test('400 on a stale version', async () => {
+		const app = makeApp({ user: { user_id: 5 } })
+		await withServer(app, async (base) => {
+			const res = await fetch(
+				`${base}/api/auth/accept-terms`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type':
+							'application/json',
+					},
+					body: JSON.stringify({
+						version: '0.1',
+					}),
+				}
+			)
+			expect(res.status).toBe(400)
+		})
+		expect(pool.query).not.toHaveBeenCalled()
+	})
+	test('200 records acceptance', async () => {
+		pool.query.mockResolvedValueOnce([{ affectedRows: 1 }])
+		const app = makeApp({ user: { user_id: 5 } })
+		await withServer(app, async (base) => {
+			const res = await fetch(
+				`${base}/api/auth/accept-terms`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type':
+							'application/json',
+					},
+					body: JSON.stringify({
+						version: '1.0',
+					}),
+				}
+			)
+			expect(res.status).toBe(200)
+			expect((await res.json()).accepted).toBe(true)
+		})
+		const [sql, [userId, version]] = pool.query.mock.calls[0]
+		expect(sql).toMatch(/user_terms_acceptances/)
+		expect(userId).toBe(5)
+		expect(version).toBe('1.0')
 	})
 })
 

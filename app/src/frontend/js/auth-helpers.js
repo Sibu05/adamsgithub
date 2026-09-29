@@ -257,6 +257,13 @@ function ensureAccountMenu(user) {
 				else window.location.href = '/?feedback=1'
 			},
 		},
+		{
+			icon: 'file-text',
+			label: 'Terms & Privacy',
+			action: () => {
+				window.location.href = '/pages/terms.html'
+			},
+		},
 		{ divider: true },
 		{ icon: 'log-out', label: 'Logout', action: logout },
 		{

@@ -5,7 +5,7 @@
  * login. Better Auth is used only for Google OAuth, which we trigger with a
  * plain redirect so we don't need the heavier Better Auth client bundle.
  */
-import { API_BASE } from './constants.js'
+import { API_BASE, TERMS_VERSION } from './constants.js'
 
 const AUTH_API = `${API_BASE}/api/auth`
 
@@ -25,18 +25,61 @@ export async function usernameSignIn(username, pin) {
 	}
 }
 
-export async function usernameSignUp(name, username, pin) {
+export async function usernameSignUp(
+	name,
+	username,
+	pin,
+	termsAccepted = false
+) {
 	try {
 		const res = await fetch(`${AUTH_API}/register`, {
 			method: 'POST',
 			credentials: 'include',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ name, email: username, pin }),
+			body: JSON.stringify({
+				name,
+				email: username,
+				pin,
+				terms_accepted: termsAccepted,
+				terms_version: TERMS_VERSION,
+			}),
 		})
 		const data = await res.json()
 		if (!res.ok)
 			throw new Error(data.error || 'Registration failed')
 		return { data: data.user, error: null }
+	} catch (error) {
+		return { data: null, error }
+	}
+}
+
+export async function getTermsStatus() {
+	try {
+		const res = await fetch(`${AUTH_API}/terms-status`, {
+			credentials: 'include',
+		})
+		if (!res.ok)
+			return { data: null, error: new Error('no session') }
+		return { data: await res.json(), error: null }
+	} catch (error) {
+		return { data: null, error }
+	}
+}
+
+export async function acceptTerms() {
+	try {
+		const res = await fetch(`${AUTH_API}/accept-terms`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ version: TERMS_VERSION }),
+		})
+		const data = await res.json()
+		if (!res.ok)
+			throw new Error(
+				data.error || 'Could not record acceptance'
+			)
+		return { data, error: null }
 	} catch (error) {
 		return { data: null, error }
 	}

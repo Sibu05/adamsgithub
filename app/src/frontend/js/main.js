@@ -10,6 +10,7 @@ import { get_player_location } from './geolocation.js'
 import { suggestEventOrder } from './graph.js'
 import { redirectAfterLogin, updateAuthNav, logout } from './auth-helpers.js'
 import { initFeedback } from './feedback.js'
+import { initTermsGate, ensureTermsAccepted } from './terms.js'
 import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
@@ -1496,6 +1497,11 @@ async function initializeApp() {
 
 		// 3. Re-sync auth (the early check already resolved the header)
 		await checkAuthSession().catch(() => {})
+		// 3b. Terms gate: Google sign-ins land without an acceptance
+		// record — block until accepted (PIN signups accept inline).
+		if (currentUser) {
+			await ensureTermsAccepted().catch(() => false)
+		}
 
 		// 4. 🎯 resumes GPS follow and flies to the player, wherever
 		// they are in the world.
@@ -1627,12 +1633,23 @@ function setupAuthDrawerHandlers() {
 				showDrawerStatus('PINs do not match.', true)
 				return
 			}
+			const agreed = document.getElementById(
+				'drawer-signup-terms'
+			)?.checked
+			if (!agreed) {
+				showDrawerStatus(
+					'Please accept the Terms of Use & Privacy Policy to create an account.',
+					true
+				)
+				return
+			}
 
 			showDrawerStatus('Creating account...', false)
 			const { data, error } = await usernameSignUp(
 				name,
 				username,
-				pin
+				pin,
+				true
 			)
 
 			if (error) {
@@ -1651,6 +1668,7 @@ function setupAuthDrawerHandlers() {
 
 document.addEventListener('DOMContentLoaded', () => {
 	setupAuthDrawerHandlers()
+	initTermsGate({ onDecline: () => handleLogout() })
 	initFeedback({
 		getUser: () => currentUser,
 		openAuth: () => window.openAuthDrawer(),

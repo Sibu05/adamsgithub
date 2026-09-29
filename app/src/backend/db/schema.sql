@@ -587,4 +587,19 @@ CREATE TABLE IF NOT EXISTS feedback_reports (
     CONSTRAINT fk_fb_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
 );
 
+-- ============================================================
+--  TERMS ACCEPTANCES  (Terms of Use + Privacy Policy consent)
+--
+--  One row per user recording which terms version they accepted
+--  and when. PIN registration requires acceptance up front;
+--  Google sign-ins accept post-login. Bumped versions re-prompt.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_terms_acceptances (
+    user_id       INT         NOT NULL PRIMARY KEY,
+    terms_version VARCHAR(20) NOT NULL,
+    accepted_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_uta_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+);
+
 SET FOREIGN_KEY_CHECKS = 1;
