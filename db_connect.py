@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import subprocess
 import shutil
 from pathlib import Path
@@ -39,9 +40,9 @@ def str_to_bool(value):
 def build_mysql_command(config):
     mariadb = shutil.which("mariadb")
     if mariadb is None:
-        program = "mysql" 
+        program = "mysql"
     else:
-        program = "mariadb" 
+        program = "mariadb"
     cmd = [
         program,
         "-h",
@@ -50,8 +51,12 @@ def build_mysql_command(config):
         str(config["DB_PORT"]),
         "-u",
         config["DB_USER"],
-        "-p",  # prompts for password interactively; not passed inline on purpose
     ]
+
+    if config.get("DB_PASSWORD"):
+        cmd.append(f'-p{config["DB_PASSWORD"]}')
+    else:
+        cmd.append("-p")
 
     if str_to_bool(config["DB_SSL"]):
         cmd.append("--ssl-ca=app/src/backend/certs/ca.pem")
@@ -75,7 +80,9 @@ def main():
     log_config(config)
 
     cmd = build_mysql_command(config)
-    print("Running:", " ".join(cmd))
+    cmd_string = " ".join(cmd)
+    masked_string = re.sub(r'(-p\s*)([^\s]+)', r'\1****', cmd_string)
+    print("Running:", masked_string)
 
     subprocess.call(cmd)
 

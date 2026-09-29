@@ -252,7 +252,26 @@ router.post('/offline-attempts', requireAuth, async (req, res) => {
 			}
 
 			// STEP 5: ATOMIC AWARD + ATTEMPT LOGGING + POINTS (Matching routes/trivia.js)
-			const pointsAwarded = event.point_reward || 10
+			// Points are once-only per event: a synced replay of an
+			// already-completed event still logs the attempt but earns 0.
+			const [priorWinRows] = await conn.query(
+				`SELECT (EXISTS(
+					SELECT 1 FROM trivia_attempts ta
+					JOIN location_check_log l ON l.check_id = ta.location_check_id
+					WHERE ta.user_id = ? AND ta.event_id = ? AND ta.is_correct = 1
+					  AND l.status IN ('VERIFIED', 'FALLBACK_QR')
+				) OR EXISTS(
+					SELECT 1 FROM event_card_awards eca
+					WHERE eca.user_id = ? AND eca.event_id = ?
+				)) AS had_prior_win`,
+				[user_id, event_id, user_id, event_id]
+			)
+			const hadPriorWin = Boolean(
+				priorWinRows[0]?.had_prior_win
+			)
+			const pointsAwarded = hadPriorWin
+				? 0
+				: event.point_reward || 10
 
 			// 5a. Insert location log entry with verified status
 			const [locCheck] = await conn.query(
@@ -293,15 +312,18 @@ router.post('/offline-attempts', requireAuth, async (req, res) => {
 				]
 			)
 
-			// 5d. Credit user points and record points transaction
-			await conn.query(
-				`UPDATE users SET points = points + ? WHERE user_id = ?`,
-				[pointsAwarded, user_id]
-			)
-			await conn.query(
-				`INSERT INTO point_transactions (user_id, delta, reason, reference_id) VALUES (?, ?, 'TRIVIA_WIN', ?)`,
-				[user_id, pointsAwarded, event_id]
-			)
+			// 5d. Credit user points and record points transaction —
+			// skipped on replays (0 points, practice only).
+			if (pointsAwarded > 0) {
+				await conn.query(
+					`UPDATE users SET points = points + ? WHERE user_id = ?`,
+					[pointsAwarded, user_id]
+				)
+				await conn.query(
+					`INSERT INTO point_transactions (user_id, delta, reason, reference_id) VALUES (?, ?, 'TRIVIA_WIN', ?)`,
+					[user_id, pointsAwarded, event_id]
+				)
+			}
 
 			// 5e. Log accepted sync request to offline queue table
 			await conn.query(
@@ -328,7 +350,10 @@ router.post('/offline-attempts', requireAuth, async (req, res) => {
 				points_awarded: pointsAwarded,
 				card_awarded: award.awarded,
 				awarded_card: award.card,
-				message: 'Offline attempt successfully verified and credited.',
+				already_completed: hadPriorWin,
+				message: hadPriorWin
+					? 'Event already completed — practice only, no new points.'
+					: 'Offline attempt successfully verified and credited.',
 			})
 		} catch (err) {
 			await conn.rollback()

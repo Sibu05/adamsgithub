@@ -22,17 +22,64 @@
 						Adamas to Aurum
 					</span>
 				</a>
+				<nav class="header-nav" id="header-nav">
+					<a
+						href="/"
+						class="nav-link hidden"
+						id="nav-events"
+					>
+						Events
+					</a>
+					<a
+						href="collection.html"
+						class="nav-link hidden"
+						id="nav-collection"
+					>
+						Collection
+					</a>
+					<a
+						href="battle.html"
+						class="nav-link nav-link-active hidden"
+						id="nav-battle"
+					>
+						Battle
+					</a>
+					<a
+						href="spectate.html"
+						class="nav-link hidden"
+						id="nav-spectate"
+					>
+						Watch
+					</a>
+					<a
+						href="leaderboard.html"
+						class="nav-link hidden"
+						id="nav-leaderboard"
+					>
+						Leaderboard
+					</a>
+					<a
+						href="console.html"
+						class="nav-link nav-link-admin hidden"
+						id="nav-console"
+					>
+						Console
+					</a>
+				</nav>
 				<div class="header-right">
 					<span
 						class="admin-badge hidden"
 						id="user-badge"
 					></span>
 					<button
-						class="btn btn-sm btn-header hidden"
-						id="btn-logout"
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
 					>
-						Logout
+						?
 					</button>
+					<button id="btn-logout">Logout</button>
 					<a
 						id="btn-signin"
 						href="../index.html"
@@ -72,6 +119,13 @@
 							challenge
 						</p>
 					</div>
+					<a
+						class="btn btn-ghost btn-sm"
+						id="btn-watch-live"
+						href="./spectate.html"
+					>
+						👁 Watch live matches
+					</a>
 				</div>
 
 				<div id="opponent-loading" class="state-msg">
@@ -296,5 +350,13 @@
 		</main>
 
 		<script type="module" src="../js/battle.js"></script>
+
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			attachHelpButton('btn-help', currentPageKey())
+		</script>
 	</body>
 </html>

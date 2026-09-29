@@ -44,8 +44,12 @@ render)
 	;;
 esac
 
-find "$TARGET_DIR" -type f -name '*.js' -print0 |
+echo "\"$FROM_HTTP\" -> \"$TO_HTTP\""
+echo "\"$FROM_WS\" -> \"$TO_WS\""
+
+find "$TARGET_DIR" -type f -regextype posix-extended -regex '.*\.(js|html)' -print0 |
 	while IFS= read -r -d '' FILE; do
+		echo "processing \"$FILE\""
 		sed -i.bak \
 			-e "s|$FROM_HTTP|$TO_HTTP|g" \
 			-e "s|$FROM_WS|$TO_WS|g" \

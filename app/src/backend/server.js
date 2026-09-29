@@ -33,13 +33,23 @@ import leaderboard_routes from './routes/leaderboard.js'
 import sync_routes from './routes/sync.js'
 import campaign_routes from './routes/campaigns.js'
 import analytics_routes from './routes/analytics.js'
+import moderation_routes from './routes/moderation.js'
+import feedback_routes from './routes/feedback.js'
+import trades_routes from './routes/trades.js'
+import zones_routes from './routes/zones.js'
 import qr_routes from './routes/qr.js'
+import battles_routes from './routes/battles.js'
+import placement_routes from './routes/placement.js'
+import movement_flags_routes from './routes/movement_flags.js'
 
 import pool from './utils/db.js'
 import { auth } from './src/auth.js'
 import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
+import { startRotationScheduler } from './placement/rotation_job.js'
+import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
+import { resolve_better_auth_user } from './utils/better_auth_sync.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -70,6 +80,18 @@ app.use(
 		credentials: true,
 	})
 )
+
+if (!process.env.SESSION_SECRET) {
+	const msg =
+		'SESSION_SECRET is not set — sessions are signed with the public dev fallback secret, so anyone can forge a session cookie. Set SESSION_SECRET in the environment.'
+	if (process.env.NODE_ENV === 'production') {
+		console.error(
+			`\n${'!'.repeat(72)}\n[SECURITY] ${msg}\n${'!'.repeat(72)}\n`
+		)
+	} else {
+		console.warn(`[session] ${msg}`)
+	}
+}
 
 const MySQLStore = mySQLSession(session)
 const sessionStore = new MySQLStore(
@@ -151,33 +173,20 @@ app.use(async (req, res, next) => {
 			),
 		])
 		if (bSession?.user) {
-			const [users] = await pool.query(
-				'SELECT user_id, name, email, avatar_url, points FROM users WHERE email = ?',
-				[bSession.user.email]
+			// Matched by Google account id, not email alone — see
+			// utils/better_auth_sync.js.
+			const resolved = await resolve_better_auth_user(
+				pool,
+				bSession.user
 			)
-			if (users.length) {
-				req.user = users[0]
+			if (resolved.conflict) {
+				req.auth_conflict = resolved.conflict
 			} else {
-				// First-time Google user — sync into our users table
-				const [result] = await pool.query(
-					`INSERT INTO users (provider_id, email, name, avatar_url, points)
-           VALUES (?, ?, ?, ?, 0)`,
-					[
-						`betterauth:${bSession.user.id}`,
-						bSession.user.email,
-						bSession.user.name,
-						bSession.user.image,
-					]
-				)
-				const [newUsers] = await pool.query(
-					'SELECT user_id, name, email, avatar_url, points FROM users WHERE user_id = ?',
-					[result.insertId]
-				)
-				req.user = newUsers[0]
+				req.user = resolved.user
+				// Keep the express-session cookie in sync so existing code that reads
+				// req.session.user.user_id continues to work for Google-OAuth users.
+				req.session.user = req.user
 			}
-			// Keep the express-session cookie in sync so existing code that reads
-			// req.session.user.user_id continues to work for Google-OAuth users.
-			req.session.user = req.user
 		}
 	} catch (err) {
 		// Silently continue for unauthenticated requests
@@ -211,6 +220,13 @@ app.use('/api/trivia', sync_routes)
 
 app.use('/api/campaigns', campaign_routes)
 app.use('/api/analytics', analytics_routes)
+app.use('/api/moderation', moderation_routes)
+app.use('/api/feedback', feedback_routes)
+app.use('/api/trades', trades_routes)
+app.use('/api/zones', zones_routes)
+app.use('/api/battles', battles_routes)
+app.use('/api/placement', placement_routes)
+app.use('/api/movement-flags', movement_flags_routes)
 
 app.get('/api/health', async (req, res) => {
 	try {
@@ -225,6 +241,10 @@ app.get('/api/health', async (req, res) => {
 // Get current authenticated user (used by frontend checkAuthSession)
 // ---------------------------------------------------------------------------
 app.get('/api/me', async (req, res) => {
+	if (!req.user?.user_id && req.auth_conflict) {
+		// Google sign-in refused (email belongs to a PIN account).
+		return res.status(409).json({ error: req.auth_conflict })
+	}
 	if (!req.user?.user_id) {
 		return res.status(401).json({ error: 'Not authenticated' })
 	}
@@ -277,6 +297,12 @@ app.get('/pages/leaderboard.html', (_req, res) => {
 app.get('/pages/logs.html', (_req, res) => {
 	res.sendFile(path.join(pagesDir, 'logs.html'))
 })
+app.get('/pages/spectate.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'spectate.html'))
+})
+app.get('/pages/terms.html', (_req, res) => {
+	res.sendFile(path.join(pagesDir, 'terms.html'))
+})
 
 // ---------------------------------------------------------------------------
 // Database initialization (unchanged from dev)
@@ -326,11 +352,311 @@ async function ensure_curation_schema() {
 	} catch {}
 }
 
+async function ensure_moderation_schema() {
+	// Tables are in schema.sql with IF NOT EXISTS for fresh DBs; create them
+	// here as well for DBs that were already initialised before this story.
+	try {
+		await pool.query(`CREATE TABLE IF NOT EXISTS user_trust_scores (
+			user_id INT NOT NULL PRIMARY KEY,
+			trust_score DECIMAL(5,2) NOT NULL,
+			evidence JSON,
+			reason TEXT,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			CONSTRAINT fk_uts_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+			CONSTRAINT chk_uts_score CHECK (trust_score BETWEEN 0 AND 100)
+		)`)
+	} catch (e) {
+		console.warn(
+			'[moderation migration] user_trust_scores',
+			e.message
+		)
+	}
+	try {
+		await pool.query(`CREATE TABLE IF NOT EXISTS moderation_actions (
+			action_id INT AUTO_INCREMENT PRIMARY KEY,
+			target_user_id INT NOT NULL,
+			moderator_id INT NOT NULL,
+			action_type ENUM('WARNING','RESTRICTION','SUSPENSION') NOT NULL,
+			reason TEXT,
+			evidence JSON,
+			duration_days INT,
+			expires_at DATETIME,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT fk_ma_target FOREIGN KEY (target_user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+			CONSTRAINT fk_ma_mod FOREIGN KEY (moderator_id) REFERENCES users (user_id)
+		)`)
+	} catch (e) {
+		console.warn(
+			'[moderation migration] moderation_actions',
+			e.message
+		)
+	}
+	const userAlters = [
+		`ALTER TABLE users ADD COLUMN moderation_status ENUM('NONE','WARNED','RESTRICTED','SUSPENDED') NOT NULL DEFAULT 'NONE'`,
+		`ALTER TABLE users ADD COLUMN moderation_expires_at DATETIME NULL`,
+	]
+	for (const sql of userAlters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060
+			)
+				console.warn(
+					'[moderation migration]',
+					err.message
+				)
+		}
+	}
+	// Seed mocked trust scores if empty — gives the console a visible queue on first boot
+	try {
+		const [cnt] = await pool.query(
+			`SELECT COUNT(*) AS c FROM user_trust_scores`
+		)
+		if (cnt[0].c === 0) {
+			const [users] = await pool.query(
+				`SELECT user_id, email FROM users ORDER BY user_id ASC LIMIT 6`
+			)
+			if (users.length) {
+				// Map: lowest trust = most suspicious; include varied evidence
+				const seeds = [
+					{
+						// bob — low trust, spoof evidence
+						idx: users.find(
+							(u) =>
+								u.email ===
+								'bob@example.com'
+						)
+							? users.findIndex(
+									(u) =>
+										u.email ===
+										'bob@example.com'
+								)
+							: 1,
+						score: 22.5,
+						reason: 'Repeated spoofed location + impossible travel',
+						evidence: [
+							{
+								type: 'SPOOFED_LOCATION',
+								detail: 'SPOOFED at Constitution Hill (distance 1240m vs 75m radius)',
+								event_id: 2,
+								distance_meters: 1240,
+								status: 'SPOOFED',
+								checked_at: '2026-01-04T10:00:00Z',
+							},
+							{
+								type: 'IMPOSSIBLE_TRAVEL',
+								detail: '85.5 m/s between Gold Reef City and Constitution Hill (2 min interval)',
+								travel_speed_ms: 85.5,
+								prev_event_id: 1,
+								curr_event_id: 2,
+								checked_at: '2026-01-04T10:02:00Z',
+							},
+							{
+								type: 'FAILED_LOCATION',
+								detail: 'FAILED check at Origins of Gold Reef City (890m out)',
+								event_id: 1,
+								distance_meters: 890,
+								status: 'FAILED',
+								checked_at: '2026-01-03T15:30:00Z',
+							},
+						],
+					},
+					{
+						// player — moderate low
+						idx: users.find(
+							(u) =>
+								u.email ===
+								'player@example.com'
+						)
+							? users.findIndex(
+									(u) =>
+										u.email ===
+										'player@example.com'
+								)
+							: 2,
+						score: 44.0,
+						reason: 'Velocity anomaly + repeated out-of-range attempts',
+						evidence: [
+							{
+								type: 'IMPOSSIBLE_TRAVEL',
+								detail: '42.1 m/s travel flagged',
+								travel_speed_ms: 42.1,
+								checked_at: '2026-01-05T09:12:00Z',
+							},
+							{
+								type: 'FAILED_LOCATION',
+								detail: '3 failed location checks in 10 minutes',
+								count: 3,
+								status: 'FAILED',
+								checked_at: '2026-01-05T09:00:00Z',
+							},
+						],
+					},
+					{
+						// admin test user — mild flag to show WARNING tier
+						idx: users.find(
+							(u) =>
+								u.email ===
+								'admin@wits.ac.za'
+						)
+							? users.findIndex(
+									(u) =>
+										u.email ===
+										'admin@wits.ac.za'
+								)
+							: 0,
+						score: 58.0,
+						reason: 'Occasional spoof flag (single incident)',
+						evidence: [
+							{
+								type: 'SPOOFED_LOCATION',
+								detail: 'Single SPOOFED log (possible GPS drift)',
+								distance_meters: 310,
+								status: 'SPOOFED',
+								checked_at: '2026-01-02T11:20:00Z',
+							},
+						],
+					},
+				]
+				for (const s of seeds) {
+					const u = users[s.idx]
+					if (!u) continue
+					await pool.query(
+						`INSERT IGNORE INTO user_trust_scores (user_id, trust_score, evidence, reason) VALUES (?, ?, ?, ?)`,
+						[
+							u.user_id,
+							s.score,
+							JSON.stringify(
+								s.evidence
+							),
+							s.reason,
+						]
+					)
+				}
+				console.log(
+					'[moderation migration] seeded mocked trust scores'
+				)
+			}
+		}
+	} catch (e) {
+		console.warn('[moderation migration] seed', e.message)
+	}
+	// Ensure demo moderator exists for manual testing (idempotent)
+	try {
+		const [mods] = await pool.query(
+			`SELECT user_id FROM users WHERE email = 'moderator@example.com'`
+		)
+		if (!mods.length) {
+			const [r] = await pool.query(
+				`INSERT INTO users (provider_id, email, name) VALUES (?, ?, ?)`,
+				[
+					'local:moderator@example.com',
+					'moderator@example.com',
+					'Maya Moderator',
+				]
+			)
+			const hash =
+				'03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4'
+			await pool.query(
+				`INSERT INTO user_credentials (user_id, pin_hash) VALUES (?, ?)`,
+				[r.insertId, hash]
+			)
+			await pool.query(
+				`INSERT INTO admin_roles (user_id, role, granted_by) VALUES (?, ?, ?)`,
+				[r.insertId, 'MODERATOR', 1]
+			)
+			console.log(
+				'[moderation migration] created demo moderator'
+			)
+		}
+	} catch (e) {
+		console.warn('[moderation migration] mod user', e.message)
+	}
+}
+
+async function ensure_placement_schema() {
+	// Procedural event placement (Sprint 3). Guarded the same way as
+	// ensure_curation_schema — additive ALTERs, safe to re-run every
+	// startup, 1060/ER_DUP_FIELDNAME means the column is already there.
+	const alters = [
+		`ALTER TABLE events ADD COLUMN is_procedural BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE events ADD COLUMN placement_zone VARCHAR(64) NULL`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060
+			)
+				console.warn(
+					'[placement migration]',
+					err.message
+				)
+		}
+	}
+}
+
+async function ensure_movement_trust_schema() {
+	// Movement trust check (Sprint 2 anti-cheat v1). The flag lives on the
+	// location check it describes, next to prev_check_id/travel_speed_ms.
+	// Guarded like the other migrations: 1060 = column already there,
+	// 1061 = index already there.
+	const alters = [
+		`ALTER TABLE location_check_log ADD COLUMN movement_flagged BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE location_check_log ADD INDEX idx_lcl_movement_flagged (movement_flagged, checked_at)`,
+	]
+	for (const sql of alters) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (
+				err.code !== 'ER_DUP_FIELDNAME' &&
+				err.errno !== 1060 &&
+				err.code !== 'ER_DUP_KEYNAME' &&
+				err.errno !== 1061
+			)
+				console.warn(
+					'[movement trust migration]',
+					err.message
+				)
+		}
+	}
+}
+
+async function warn_if_better_auth_tables_missing() {
+	// Read-only check. Better Auth doesn't create its own tables, and
+	// running its migration automatically here would also touch whatever
+	// shared/deployed DB this server points at — so it's an explicit step:
+	// `npm run db:migrate-auth`.
+	try {
+		const { tables, columns } =
+			await pending_better_auth_migrations(auth.options)
+		if (tables.length || columns.length) {
+			console.warn(
+				`[better-auth] Missing ${[...tables, ...columns].join(', ')} — Google and email sign-in will fail until you run: npm run db:migrate-auth`
+			)
+		}
+	} catch (err) {
+		console.warn(
+			'[better-auth] Could not check Better Auth tables:',
+			err.message
+		)
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
 	await execute_sql_script(pool, './db/schema.sql')
 	await ensure_curation_schema()
+	await ensure_moderation_schema()
+	await ensure_placement_schema()
+	await ensure_movement_trust_schema()
+	await warn_if_better_auth_tables_missing()
 }
 
 async function seed_database() {
@@ -371,6 +697,14 @@ try {
 	}
 	if (process.env.LOG_DB === 'true') {
 		await view_database()
+	}
+
+	// Always on — but never under Jest, where JEST_WORKER_ID is set. A
+	// real setInterval hitting a real (test) DB every tick has no place in
+	// a unit test run; startRotationScheduler itself is still exercised
+	// directly by rotation_job.test.js.
+	if (!process.env.JEST_WORKER_ID) {
+		startRotationScheduler(pool)
 	}
 } catch (err) {
 	console.error('error: ', err.message)
