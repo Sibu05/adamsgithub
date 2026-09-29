@@ -1,5 +1,31 @@
 /* Procedural Placement tab (console) */
 
+/* Map + side panel. minmax(0, …) lets both tracks shrink below their
+   content; with plain 1fr/340px, long nowrap rows (e.g. a
+   JOHANNESBURG_PLANETARIUM zone pill) widened the side column past the
+   page, so the whole page scrolled sideways and the header looked cut
+   off. */
+.placement-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+	gap: 1.5rem;
+	align-items: start;
+}
+.placement-side {
+	display: grid;
+	gap: 1rem;
+	min-width: 0;
+}
+.placement-side > .form-card {
+	min-width: 0;
+	padding: 1.25rem 1.5rem;
+}
+@media (max-width: 900px) {
+	.placement-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
 .placement-config-row {
 	display: flex;
 	justify-content: space-between;
@@ -25,11 +51,20 @@
 	border-bottom: none;
 }
 .placement-event-row .placement-event-title {
+	flex: 1;
+	min-width: 0;
 	color: var(--text);
 	font-weight: 600;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.placement-event-row .meta-pill {
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex-shrink: 1;
 }
 .placement-event-row .placement-event-time {
 	color: var(--text-muted);
@@ -63,4 +98,23 @@
 
 #placement-map .maplibregl-ctrl-attrib {
 	font-size: 0.65rem;
+}
+
+/* Not enough Wits-campus questions for pop-ups (see /status questionPool). */
+.placement-warning {
+	margin: 0.75rem 0 0;
+	padding: 0.6rem 0.75rem;
+	border-radius: var(--radius, 8px);
+	border: 1px solid #f5c26b;
+	border-left: 4px solid #f59e0b;
+	background: #fff8e6;
+	color: #7a4b00;
+	font-size: 0.8rem;
+	line-height: 1.4;
+}
+.placement-run-error {
+	display: block;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	white-space: normal;
 }

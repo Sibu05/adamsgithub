@@ -24,7 +24,7 @@
 				</a>
 				<nav class="header-nav" id="header-nav">
 					<a
-						href="events.html"
+						href="/"
 						class="nav-link hidden"
 						id="nav-events"
 					>
@@ -140,6 +140,33 @@
 						Battle
 					</a>
 					<a
+						href="spectate.html"
+						class="nav-link hidden"
+						id="nav-spectate"
+					>
+						<span class="nav-ico">
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								<path
+									d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"
+								/>
+								<circle
+									cx="12"
+									cy="12"
+									r="3"
+								/>
+							</svg>
+						</span>
+						Watch
+					</a>
+					<a
 						href="leaderboard.html"
 						class="nav-link hidden"
 						id="nav-leaderboard"
@@ -190,11 +217,14 @@
 						id="user-badge"
 					></span>
 					<button
-						class="btn btn-sm btn-header hidden"
-						id="btn-logout"
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
 					>
-						Logout
+						?
 					</button>
+					<button id="btn-logout">Logout</button>
 					<a
 						id="btn-signin"
 						href="../index.html"
@@ -296,5 +326,13 @@
 		</main>
 
 		<script type="module" src="../js/collection.js"></script>
+
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			attachHelpButton('btn-help', currentPageKey())
+		</script>
 	</body>
 </html>

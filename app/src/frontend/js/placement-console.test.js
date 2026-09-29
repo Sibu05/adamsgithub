@@ -16,6 +16,7 @@ function setupDom() {
 			<button id="btn-placement-generate">Generate now</button>
 			<button id="btn-placement-rotate">Rotate now</button>
 			<p id="placement-action-msg" class="hidden"></p>
+			<p id="placement-question-warning" class="hidden"></p>
 		</div>
 		<div id="toast"></div>
 	`
@@ -38,6 +39,7 @@ class FakeMap {
 		this.addControl = jest.fn()
 		this.setPaintProperty = jest.fn()
 		this.resize = jest.fn()
+		this.fitBounds = jest.fn()
 		FakeMap.instances.push(this)
 	}
 	on(event, cb) {
@@ -151,7 +153,221 @@ afterEach(() => {
 	jest.restoreAllMocks()
 })
 
+describe('API dates (Recent runs "Started" column)', () => {
+	// The real API sends ISO strings with a Z (mysql2 returns Date
+	// objects); the old parser appended another Z → Invalid Date.
+	const ISO = '2026-09-27T11:13:00.000Z'
+
+	test('parseApiDate accepts ISO (with zone), SQL strings (UTC) and Dates', () => {
+		const expected = Date.parse(ISO)
+		expect(placementConsole.parseApiDate(ISO).getTime()).toBe(
+			expected
+		)
+		expect(
+			placementConsole
+				.parseApiDate('2026-09-27 11:13:00')
+				.getTime()
+		).toBe(expected)
+		expect(
+			placementConsole
+				.parseApiDate('2026-09-27T13:13:00+02:00')
+				.getTime()
+		).toBe(expected)
+		expect(
+			placementConsole.parseApiDate(new Date(ISO)).getTime()
+		).toBe(expected)
+	})
+
+	test('parseApiDate returns null for empty or junk', () => {
+		expect(placementConsole.parseApiDate(null)).toBeNull()
+		expect(placementConsole.parseApiDate('')).toBeNull()
+		expect(placementConsole.parseApiDate('not a date')).toBeNull()
+	})
+
+	test('renderRuns never prints "Invalid Date" for the real API shape', () => {
+		placementConsole.renderRuns([
+			{
+				run_id: 7,
+				started_at: ISO,
+				status: 'SUCCESS',
+				retired_count: 12,
+				created_count: 12,
+			},
+		])
+		const html = document.getElementById(
+			'placement-runs-body'
+		).innerHTML
+		expect(html).not.toMatch(/Invalid Date/)
+		expect(html).toContain('2026')
+	})
+
+	test('formatRunStarted shows — for a missing date', () => {
+		expect(placementConsole.formatRunStarted(null)).toBe('—')
+	})
+})
+
+describe('Wits question pool on the Placement tab', () => {
+	const warning = () =>
+		document.getElementById('placement-question-warning')
+
+	test('shows the shortage message on the tab when there are too few', () => {
+		placementConsole.renderQuestionPool({
+			witsQuestions: 1,
+			perPopup: 2,
+			enough: false,
+			message: 'Only 1 Wits-campus question available — each pop-up needs 2.',
+		})
+		expect(warning().classList.contains('hidden')).toBe(false)
+		expect(warning().textContent).toMatch(
+			/Only 1 Wits-campus question/
+		)
+	})
+
+	test('hidden when there are enough', () => {
+		placementConsole.renderQuestionPool({
+			witsQuestions: 24,
+			perPopup: 2,
+			enough: true,
+			message: null,
+		})
+		expect(warning().classList.contains('hidden')).toBe(true)
+	})
+
+	test('config panel lists the Wits question count', () => {
+		placementConsole.renderConfig(
+			{
+				minSpacingMeters: 80,
+				maxLive: 12,
+				eventTtlMinutes: 60,
+				rotationIntervalMinutes: 15,
+				radiusMeters: 30,
+				cooldownRotations: 3,
+			},
+			{ witsQuestions: 24, perPopup: 2, enough: true }
+		)
+		expect(
+			document.getElementById('placement-config-list')
+				.textContent
+		).toMatch(/Wits questions\s*24 \(2 per pop-up\)/)
+	})
+
+	test('a SKIPPED run shows its reason in Recent runs', () => {
+		placementConsole.renderRuns([
+			{
+				run_id: 9,
+				started_at: '2026-09-27T11:13:00.000Z',
+				status: 'SKIPPED',
+				error: 'Only 0 Wits-campus questions available',
+				retired_count: 0,
+				created_count: 0,
+			},
+		])
+		expect(
+			document.querySelector('.placement-run-error')
+				.textContent
+		).toBe('Only 0 Wits-campus questions available')
+	})
+})
+
+describe('map framing (placementBounds / fit on open)', () => {
+	test('bounds wrap every live pop-up', () => {
+		expect(
+			placementConsole.placementBounds([
+				{ latitude: '-26.1915', longitude: '28.0303' },
+				{ latitude: '-26.1885', longitude: '28.0256' },
+				{ latitude: '-26.1930', longitude: '28.0282' },
+			])
+		).toEqual([
+			[28.0256, -26.193],
+			[28.0303, -26.1885],
+		])
+	})
+
+	test('no pop-ups: falls back to the whole path graph', () => {
+		expect(
+			placementConsole.placementBounds([], {
+				nodes: [
+					{ lat: -26.19, lng: 28.02 },
+					{ lat: -26.18, lng: 28.03 },
+				],
+			})
+		).toEqual([
+			[28.02, -26.19],
+			[28.03, -26.18],
+		])
+		expect(placementConsole.placementBounds([], null)).toBeNull()
+	})
+
+	test('loading status fits the map to the live pop-ups', async () => {
+		global.fetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => statusFixture(),
+		})
+		document.querySelector('[data-tab="placement"]').click()
+		const map = FakeMap.instances[0]
+		map.triggerLoad()
+		await new Promise((r) => setTimeout(r, 0))
+		await new Promise((r) => setTimeout(r, 0))
+		expect(map.fitBounds).toHaveBeenCalled()
+		const [bounds, opts] = map.fitBounds.mock.calls.at(-1)
+		expect(bounds).toEqual(
+			placementConsole.placementBounds(
+				statusFixture().activeEvents
+			)
+		)
+		expect(opts).toMatchObject({ padding: 48, maxZoom: 17.5 })
+	})
+
+	test('the placement map can zoom out past the player map limit and is top-down', async () => {
+		global.fetch.mockResolvedValueOnce({
+			ok: true,
+			json: async () => statusFixture(),
+		})
+		document.querySelector('[data-tab="placement"]').click()
+		await new Promise((r) => setTimeout(r, 0))
+		const { opts } = FakeMap.instances[0]
+		// Player map is clamped at minZoom 17 / minPitch 55; the overview
+		// must be able to show the whole campus (~zoom 15) flat.
+		expect(opts.minZoom).toBeLessThan(15)
+		expect(opts.minPitch).toBe(0)
+		expect(opts.pitch).toBe(0)
+	})
+})
+
 describe('formatTimeLeft', () => {
+	test('works with the ISO strings the API really sends (was always "—")', () => {
+		const now = new Date('2026-09-27T11:00:00.000Z')
+		expect(
+			placementConsole.formatTimeLeft(
+				'2026-09-27T11:37:00.000Z',
+				now
+			)
+		).toBe('37m left')
+		expect(
+			placementConsole.formatTimeLeft(
+				'2026-09-27T12:04:00.000Z',
+				now
+			)
+		).toBe('1h 4m left')
+	})
+
+	test('Active events rows show time left for the real API shape', () => {
+		placementConsole.renderEventsList(
+			[
+				{
+					title: 'Pop-up Quest: Great Hall',
+					zone: 'great_hall',
+					ends_at: '2026-09-27T11:45:00.000Z',
+				},
+			],
+			new Date('2026-09-27T11:00:00.000Z')
+		)
+		expect(
+			document.querySelector('.placement-event-time')
+				.textContent
+		).toBe('45m left')
+	})
+
 	test('formats minutes left', () => {
 		const now = new Date('2026-01-01T00:00:00Z')
 		expect(
@@ -366,6 +582,79 @@ describe('map rendering', () => {
 	})
 })
 
+describe('describePlacementResult', () => {
+	const cfg = { maxLive: 12, minSpacingMeters: 80 }
+	const d = (...a) => placementConsole.describePlacementResult(...a)
+
+	test('forced rotation: says how many were retired and placed', () => {
+		expect(
+			d(
+				{
+					retiredCount: 12,
+					createdCount: 12,
+					status: 'SUCCESS',
+					forced: true,
+					maxLive: 12,
+				},
+				'rotate',
+				cfg
+			)
+		).toBe(
+			'Rotated: retired 12 live pop-ups and placed 12 new ones.'
+		)
+	})
+
+	test('explains a short batch (spacing / cooldown)', () => {
+		expect(
+			d(
+				{
+					retiredCount: 12,
+					createdCount: 9,
+					status: 'SUCCESS',
+					maxLive: 12,
+				},
+				'rotate',
+				cfg
+			)
+		).toMatch(
+			/Only 9 of 12 fit — new pop-ups must stay 80 m apart.*cooldown/
+		)
+	})
+
+	test('generate at the cap points to Rotate now', () => {
+		expect(
+			d(
+				{ createdCount: 0, status: 'SUCCESS' },
+				'generate',
+				cfg
+			)
+		).toMatch(/already at the cap \(12 live\).*Rotate now/)
+		expect(
+			d(
+				{ createdCount: 3, status: 'SUCCESS' },
+				'generate',
+				cfg
+			)
+		).toBe('Generated 3 new pop-ups.')
+	})
+
+	test('lock held, skipped and failed runs are reported as such', () => {
+		expect(d({ skipped: true }, 'rotate', cfg)).toMatch(
+			/already running/
+		)
+		expect(
+			d(
+				{ status: 'SKIPPED', error: 'No author' },
+				'rotate',
+				cfg
+			)
+		).toBe('No author')
+		expect(
+			d({ status: 'FAILED', error: 'boom' }, 'rotate', cfg)
+		).toBe('Rotation failed: boom')
+	})
+})
+
 describe('Generate now / Rotate now buttons', () => {
 	test('Generate now POSTs to /api/placement/generate then refreshes status', async () => {
 		global.fetch
@@ -430,6 +719,10 @@ describe('Generate now / Rotate now buttons', () => {
 			expect.stringContaining('/api/placement/rotate'),
 			expect.objectContaining({ method: 'POST' })
 		)
+		expect(
+			document.getElementById('placement-action-msg')
+				.textContent
+		).toMatch(/Rotated: retired 1 live pop-up and placed 1 new one/)
 	})
 
 	test('buttons are disabled for the duration of the request', async () => {

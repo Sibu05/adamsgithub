@@ -135,7 +135,7 @@ function zoneWeight(zoneId, zoneLastUsed, now) {
 /**
  * Choose new event locations along the campus path graph.
  *
- * - Never lets the live event count exceed config.maxLive.
+ * - Never lets the live pop-up count (liveCount) exceed config.maxLive.
  * - Keeps every new point >= minSpacingMeters from active events and
  *   from every other new point.
  * - Skips points within minSpacingMeters of recentSpots (cooldown).
@@ -150,6 +150,7 @@ function zoneWeight(zoneId, zoneLastUsed, now) {
 export function generatePlacements({
 	graph,
 	activeEvents = [],
+	liveCount = activeEvents.length,
 	recentSpots = [],
 	zoneLastUsed = {},
 	config = {},
@@ -158,7 +159,10 @@ export function generatePlacements({
 }) {
 	const cfg = { ...DEFAULT_CONFIG, ...config }
 
-	const slotsAvailable = cfg.maxLive - activeEvents.length
+	// activeEvents = everything to keep spacing from; liveCount = how many
+	// of them count toward the maxLive cap (the caller passes just the
+	// live pop-ups, so hand-authored events don't eat pop-up slots).
+	const slotsAvailable = cfg.maxLive - liveCount
 	if (slotsAvailable <= 0) return []
 
 	const activePoints = activeEvents.map(toPoint)
@@ -218,4 +222,55 @@ export function generatePlacements({
 	}
 
 	return placed
+}
+
+// ── "On Wits campus" for pop-up question sources ──────────────
+
+// An event counts as on Wits campus when it's within this distance of
+// the walkable campus path graph pop-ups are placed on. The graph is
+// built from OSM walkways inside the Wits main-campus boundary, so this
+// is tighter than the map's CAMPUS_BOUNDS play-area box (which also
+// covers Constitution Hill).
+export const WITS_QUESTION_MAX_DISTANCE_M = 100
+
+// Metres from p to segment a–b (local equirectangular — fine at campus
+// scale).
+function pointToSegmentMeters(p, a, b) {
+	const kx = 111320 * Math.cos((p.lat * Math.PI) / 180)
+	const ky = 110540
+	const ax = (a.lng - p.lng) * kx
+	const ay = (a.lat - p.lat) * ky
+	const bx = (b.lng - p.lng) * kx
+	const by = (b.lat - p.lat) * ky
+	const dx = bx - ax
+	const dy = by - ay
+	const len2 = dx * dx + dy * dy
+	const t = len2
+		? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2))
+		: 0
+	return Math.hypot(ax + t * dx, ay + t * dy)
+}
+
+/** Shortest distance (m) from {lat, lng} to any edge of the path graph. */
+export function distanceToGraphMeters(point, graph) {
+	const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+	let best = Infinity
+	for (const [fromId, toId] of graph.edges) {
+		const a = byId.get(fromId)
+		const b = byId.get(toId)
+		if (!a || !b) continue
+		best = Math.min(best, pointToSegmentMeters(point, a, b))
+	}
+	return best
+}
+
+export function isNearCampusPaths(
+	point,
+	graph,
+	maxMeters = WITS_QUESTION_MAX_DISTANCE_M
+) {
+	const lat = Number(point.lat ?? point.latitude)
+	const lng = Number(point.lng ?? point.longitude)
+	if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false
+	return distanceToGraphMeters({ lat, lng }, graph) <= maxMeters
 }

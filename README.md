@@ -156,6 +156,12 @@ $ cp app/src/backend/.env.example app/src/backend/.env
 $ npm run db:up
 ```
 
+3. Create Better Auth's tables (needed for Google / email sign-in):
+
+```bash
+$ npm run db:migrate-auth
+```
+
 ### How It Works
 
 1. **Schema auto-creates** on startup — `server.js` calls
@@ -163,8 +169,14 @@ $ npm run db:up
    `CREATE TABLE IF NOT EXISTS` for every table (events, users,
    admin_roles, questions, trivia_questions, trivia_options, …).
    This is safe and non-destructive — existing data is never touched.
-2. **Better Auth** auto-creates its own tables (`user`, `session`,
-   `account`, `verification`) on the first auth request.
+2. **Better Auth** does **not** create its own tables (`user`,
+   `session`, `account`, `verification`) — Google and email sign-in
+   return 500 until they exist. Create them once per database with
+   `npm run db:migrate-auth` (`setup.py` does this for you). It uses
+   Better Auth's own migration planner, is additive and safe to re-run.
+   On startup the server only _checks_ and logs a warning if they're
+   missing — it never migrates automatically, since that would also
+   touch any shared/deployed DB the server points at.
 3. **Bridge middleware** runs on every request: if a Better Auth
    session exists, it looks up (or creates) a matching row in the
    `users` table and populates `req.session.user` so that existing

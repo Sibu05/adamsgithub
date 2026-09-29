@@ -146,22 +146,69 @@ router.get('/', async (req, res) => {
 		// Public: only PUBLISHED + active AND inside time window.
 		// If curation column not yet migrated, gracefully fallback to old check.
 		const curationExists = await hasCurationColumn()
+		let results
 		if (curationExists) {
-			const [results] = await pool.query(
+			const [rows] = await pool.query(
 				`SELECT * FROM events 
 				 WHERE is_active = TRUE 
 				   AND curation_status = 'PUBLISHED'
 				   AND (starts_at IS NULL OR starts_at <= UTC_TIMESTAMP()) 
 				   AND (ends_at IS NULL OR ends_at >= UTC_TIMESTAMP())`
 			)
-			return res.json(results)
+			results = rows
+		} else {
+			const [rows] = await pool.query(
+				`SELECT * FROM events 
+				 WHERE is_active = TRUE 
+				   AND (starts_at IS NULL OR starts_at <= UTC_TIMESTAMP()) 
+				   AND (ends_at IS NULL OR ends_at >= UTC_TIMESTAMP())`
+			)
+			results = rows
 		}
-		const [results] = await pool.query(
-			`SELECT * FROM events 
-			 WHERE is_active = TRUE 
-			   AND (starts_at IS NULL OR starts_at <= UTC_TIMESTAMP()) 
-			   AND (ends_at IS NULL OR ends_at >= UTC_TIMESTAMP())`
-		)
+		// Per-player completion flags (fail-open: anonymous or legacy DBs
+		// get the plain list). "Done" = a counted win: a correct answer
+		// on a VERIFIED / FALLBACK_QR location check, or a card award row
+		// (which itself implies a verified win). A correct-but-too-far
+		// attempt records is_correct=1 with 0 points and must NOT hide
+		// the event, so the location join matters.
+		const userId = req.session?.user?.user_id || req.user?.user_id
+		if (userId) {
+			try {
+				const [done] = await pool.query(
+					`SELECT event_id, MAX(completed_at) AS completed_at FROM (
+						SELECT ta.event_id, ta.attempted_at AS completed_at
+						FROM trivia_attempts ta
+						JOIN location_check_log l ON l.check_id = ta.location_check_id
+						WHERE ta.user_id = ? AND ta.is_correct = 1
+						  AND l.status IN ('VERIFIED', 'FALLBACK_QR')
+						UNION
+						SELECT eca.event_id, eca.awarded_at AS completed_at
+						FROM event_card_awards eca WHERE eca.user_id = ?
+					) done GROUP BY event_id`,
+					[userId, userId]
+				)
+				const doneById = new Map(
+					done.map((d) => [
+						d.event_id,
+						d.completed_at,
+					])
+				)
+				results = results.map((ev) =>
+					doneById.has(ev.event_id)
+						? {
+								...ev,
+								completed: true,
+								completed_at:
+									doneById.get(
+										ev.event_id
+									),
+							}
+						: { ...ev, completed: false }
+				)
+			} catch {
+				// e.g. table missing on an old DB — serve list without flags
+			}
+		}
 		res.json(results)
 	} catch (err) {
 		res.status(500).json({ error: err.message })

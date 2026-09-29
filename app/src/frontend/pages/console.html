@@ -32,7 +32,7 @@
 				</a>
 				<nav class="header-nav" id="header-nav">
 					<a
-						href="events.html"
+						href="/"
 						class="nav-link hidden"
 						id="nav-events"
 					>
@@ -148,6 +148,33 @@
 						Battle
 					</a>
 					<a
+						href="spectate.html"
+						class="nav-link hidden"
+						id="nav-spectate"
+					>
+						<span class="nav-ico">
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								<path
+									d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"
+								/>
+								<circle
+									cx="12"
+									cy="12"
+									r="3"
+								/>
+							</svg>
+						</span>
+						Watch
+					</a>
+					<a
 						href="leaderboard.html"
 						class="nav-link hidden"
 						id="nav-leaderboard"
@@ -191,11 +218,14 @@
 						id="user-badge"
 					></span>
 					<button
-						class="btn btn-sm btn-header hidden"
-						id="btn-logout"
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
 					>
-						Logout
+						?
 					</button>
+					<button id="btn-logout">Logout</button>
 					<a
 						id="btn-signin"
 						href="../index.html"
@@ -214,8 +244,8 @@
 			<div id="access-denied" class="access-denied hidden">
 				<h2>Access Denied</h2>
 				<p>
-					You need an Event Author or Super Admin
-					role to use this console.
+					You need an Event Author, Moderator, or
+					Super Admin role to use this console.
 				</p>
 				<button
 					class="btn btn-ghost"
@@ -252,6 +282,22 @@
 						data-tab="insights"
 					>
 						Insights
+					</button>
+					<button
+						class="tab-btn"
+						data-tab="moderation"
+					>
+						Moderation
+					</button>
+					<button
+						class="tab-btn"
+						data-tab="feedback"
+					>
+						Feedback
+						<span
+							id="feedback-tab-count"
+							class="tab-count hidden"
+						></span>
 					</button>
 					<button
 						class="tab-btn"
@@ -398,6 +444,22 @@
 									</option>
 								</select>
 							</div>
+							<label
+								class="toolbar-toggle"
+								for="toggle-past-popups"
+								title="Pop-ups the rotation job has retired or archived. Hidden by default; still stored for history and analytics."
+							>
+								<input
+									type="checkbox"
+									id="toggle-past-popups"
+								/>
+								Show past
+								pop-ups
+								<span
+									class="section-count"
+									id="past-popups-count"
+								></span>
+							</label>
 						</div>
 
 						<div id="event-list"></div>
@@ -973,7 +1035,7 @@
 														id="q-correct"
 														type="text"
 														list="q-option-list"
-														placeholder="For true/false use 'true' or 'false'"
+														placeholder="Type one of the options above exactly"
 													/>
 													<datalist
 														id="q-option-list"
@@ -2002,30 +2064,439 @@
 				<!-- /tab-campaigns -->
 
 				<!-- ═══════════════════════════════════════════
-				     INSIGHTS TAB (stale + hard questions)
+				     INSIGHTS TAB (User Story 10: analytics dashboard)
+				     Engagement · Question difficulty · Card drop rates
+				     + legacy curation (stale + hard questions)
 				════════════════════════════════════════════ -->
 				<div id="tab-insights" class="hidden">
 					<div class="page-header">
 						<h1 class="page-title">
-							Curation Insights
+							Analytics Dashboard
 						</h1>
 						<p class="page-subtitle">
-							Questions everybody gets
-							wrong · Old events to
-							retire
+							Engagement per event ·
+							Question difficulty ·
+							Card drop rates ·
+							Curation
 						</p>
 					</div>
-					<div style="display: grid; gap: 1.5rem">
+					<nav
+						class="mini-tabs"
+						id="insights-sub-tabs"
+						aria-label="Insights sections"
+					>
+						<button
+							type="button"
+							class="mini-tab-btn mini-tab-active"
+							data-insights-view="overview"
+						>
+							Overview
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="engagement"
+						>
+							Engagement
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="difficulty"
+						>
+							Difficulty
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="droprates"
+						>
+							Drop rates
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="hard"
+						>
+							Hard questions
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="stale"
+						>
+							Stale events
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-insights-view="all"
+						>
+							All
+						</button>
+					</nav>
+					<div
+						style="
+							display: grid;
+							gap: 1.5rem;
+						"
+						id="insights-panels"
+					>
 						<div
 							class="form-card"
 							id="insights-overview"
+							data-insights-panel="overview"
 							style="
 								display: flex;
 								gap: 1rem;
 								flex-wrap: wrap;
 							"
 						></div>
-						<div class="form-card">
+						<div
+							class="form-card"
+							data-insights-panel="engagement"
+						>
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Engagement
+										—
+										attempts
+										/
+										visits
+										per
+										event
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Which
+										locations
+										and
+										events
+										draw
+										players,
+										which
+										are
+										ignored.
+										Reads
+										existing
+										attempt
+										+
+										location
+										logs.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+								>
+									<label
+										for="engagement-sort"
+									>
+										Sort
+									</label>
+									<select
+										id="engagement-sort"
+										class="sort-select"
+									>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+										<option
+											value="unique_players-desc"
+										>
+											Most
+											players
+										</option>
+										<option
+											value="visits-desc"
+										>
+											Most
+											visits
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Highest
+											correct
+											rate
+										</option>
+										<option
+											value="correct_rate-asc"
+										>
+											Lowest
+											correct
+											rate
+										</option>
+										<option
+											value="title-asc"
+										>
+											Title
+											A–Z
+										</option>
+										<option
+											value="last_activity-desc"
+										>
+											Recently
+											active
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="engagement-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="engagement-list"
+								class="event-list"
+							></ul>
+							<div
+								id="engagement-empty"
+								class="state-msg hidden"
+							>
+								No engagement
+								data yet (no
+								attempts
+								logged).
+							</div>
+						</div>
+						<div
+							class="form-card"
+							data-insights-panel="difficulty"
+						>
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Question
+										difficulty
+										—
+										correct
+										rate
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Too
+										hard
+										(≥60%
+										wrong)
+										or
+										too
+										easy
+										(≥90%
+										correct)
+										to
+										be
+										worth
+										asking.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+									style="
+										display: flex;
+										gap: 0.5rem;
+										flex-wrap: wrap;
+									"
+								>
+									<select
+										id="difficulty-filter"
+										class="sort-select"
+										aria-label="Difficulty filter"
+									>
+										<option
+											value="all"
+										>
+											All
+											flags
+										</option>
+										<option
+											value="too_hard"
+										>
+											Too
+											hard
+										</option>
+										<option
+											value="too_easy"
+										>
+											Too
+											easy
+										</option>
+										<option
+											value="ok"
+										>
+											OK
+										</option>
+										<option
+											value="ignored"
+										>
+											Ignored
+											(0
+											attempts)
+										</option>
+									</select>
+									<select
+										id="difficulty-sort"
+										class="sort-select"
+										aria-label="Difficulty sort"
+									>
+										<option
+											value="correct_rate-asc"
+										>
+											Hardest
+											first
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Easiest
+											first
+										</option>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="difficulty-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="difficulty-list"
+								class="event-list"
+							></ul>
+							<div
+								id="difficulty-empty"
+								class="state-msg hidden"
+							>
+								No questions
+								match this
+								filter yet.
+							</div>
+						</div>
+						<div
+							class="form-card"
+							data-insights-panel="droprates"
+						>
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Card
+										drop
+										rates
+										—
+										actual
+										vs
+										intended
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+										id="droprate-subtitle"
+									>
+										Actual
+										issuance
+										rate
+										per
+										card
+										vs
+										configured
+										pool
+										weight
+										/
+										rarity.
+									</p>
+								</div>
+								<button
+									class="btn btn-ghost btn-sm"
+									id="btn-droprate-refresh"
+									type="button"
+								>
+									↻
+									Refresh
+								</button>
+							</div>
+							<div
+								id="droprate-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="droprate-list"
+								class="event-list"
+							></ul>
+							<div
+								id="droprate-empty"
+								class="state-msg hidden"
+							>
+								No cards issued
+								yet.
+							</div>
+						</div>
+						<div
+							class="form-card"
+							data-insights-panel="hard"
+						>
 							<h2
 								class="page-title"
 								style="
@@ -2067,7 +2538,10 @@
 								attempts).
 							</div>
 						</div>
-						<div class="form-card">
+						<div
+							class="form-card"
+							data-insights-panel="stale"
+						>
 							<h2
 								class="page-title"
 								style="
@@ -2110,6 +2584,241 @@
 				<!-- /tab-insights -->
 
 				<!-- ═══════════════════════════════════════════
+				     MODERATION TAB (User Story 5)
+				     Flagged players sorted by trust_score, evidence + graduated tiers
+				════════════════════════════════════════════ -->
+				<div id="tab-moderation" class="hidden">
+					<div
+						class="page-header"
+						style="
+							display: flex;
+							align-items: baseline;
+							justify-content: space-between;
+							flex-wrap: wrap;
+							gap: 1rem;
+						"
+					>
+						<div>
+							<h1 class="page-title">
+								Moderation Queue
+							</h1>
+							<p
+								class="page-subtitle"
+								id="mod-count"
+							>
+								Loading…
+							</p>
+						</div>
+						<button
+							class="btn btn-ghost btn-sm"
+							id="btn-mod-refresh"
+						>
+							↻ Refresh
+						</button>
+					</div>
+					<nav
+						class="mini-tabs"
+						id="mod-sub-tabs"
+						aria-label="Moderation sections"
+					>
+						<button
+							type="button"
+							class="mini-tab-btn mini-tab-active"
+							data-mod-view="queue"
+						>
+							Queue
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-mod-view="actions"
+						>
+							Recent actions
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-mod-view="all"
+						>
+							All
+						</button>
+						<input
+							type="search"
+							id="mod-search"
+							class="sort-select"
+							placeholder="Search name, email, reason…"
+							aria-label="Search moderation queue"
+							style="
+								margin-left: auto;
+							"
+						/>
+					</nav>
+					<div data-mod-panel="queue">
+						<div
+							id="mod-loading"
+							class="state-msg"
+						>
+							Loading flagged players…
+						</div>
+						<div
+							id="mod-empty"
+							class="state-msg hidden"
+						>
+							No flagged players —
+							everyone looks
+							trustworthy.
+						</div>
+						<div
+							id="mod-error"
+							class="state-msg error hidden"
+						></div>
+						<ul
+							id="mod-list"
+							class="event-list"
+						></ul>
+					</div>
+					<div
+						class="form-card"
+						style="margin-top: 1.5rem"
+						data-mod-panel="actions"
+					>
+						<h2
+							class="page-title"
+							style="
+								font-size: 1.15rem;
+							"
+						>
+							Recent actions
+						</h2>
+						<p
+							class="page-subtitle"
+							style="
+								margin-bottom: 0.75rem;
+							"
+						>
+							Audit trail of warnings
+							→ restrictions →
+							suspensions
+						</p>
+						<div
+							id="mod-actions-loading"
+							class="state-msg"
+						>
+							Loading…
+						</div>
+						<ul
+							id="mod-actions-list"
+							class="event-list"
+						></ul>
+						<div
+							id="mod-actions-empty"
+							class="state-msg hidden"
+						>
+							No actions yet.
+						</div>
+					</div>
+				</div>
+				<!-- /tab-moderation -->
+
+				<!-- ═══════════════════════════════════════════
+				     FEEDBACK TAB (Help & feedback — player issue reports)
+				     NEW → ACKNOWLEDGED → RESOLVED triage queue
+				════════════════════════════════════════════ -->
+				<div id="tab-feedback" class="hidden">
+					<div
+						class="page-header"
+						style="
+							display: flex;
+							align-items: baseline;
+							justify-content: space-between;
+							flex-wrap: wrap;
+							gap: 1rem;
+						"
+					>
+						<div>
+							<h1 class="page-title">
+								Player Feedback
+							</h1>
+							<p
+								class="page-subtitle"
+								id="fb-count"
+							>
+								Loading…
+							</p>
+						</div>
+						<button
+							class="btn btn-ghost btn-sm"
+							id="btn-fb-refresh"
+						>
+							↻ Refresh
+						</button>
+					</div>
+					<nav
+						class="mini-tabs"
+						id="fb-sub-tabs"
+						aria-label="Feedback status"
+					>
+						<button
+							type="button"
+							class="mini-tab-btn mini-tab-active"
+							data-fb-view="NEW"
+						>
+							New
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="ACKNOWLEDGED"
+						>
+							Acknowledged
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="RESOLVED"
+						>
+							Resolved
+						</button>
+						<button
+							type="button"
+							class="mini-tab-btn"
+							data-fb-view="ALL"
+						>
+							All
+						</button>
+						<input
+							type="search"
+							id="fb-search"
+							class="sort-select"
+							placeholder="Search title, player, text…"
+							aria-label="Search feedback reports"
+							style="
+								margin-left: auto;
+							"
+						/>
+					</nav>
+					<div id="fb-loading" class="state-msg">
+						Loading player reports…
+					</div>
+					<div
+						id="fb-empty"
+						class="state-msg hidden"
+					>
+						No reports in this state — inbox
+						zero.
+					</div>
+					<div
+						id="fb-error"
+						class="state-msg error hidden"
+					></div>
+					<ul
+						id="fb-list"
+						class="event-list"
+					></ul>
+				</div>
+				<!-- /tab-feedback -->
+
+				<!-- ═══════════════════════════════════════════
 				     PLACEMENT TAB
 				════════════════════════════════════════════ -->
 				<div id="tab-placement" class="hidden">
@@ -2126,14 +2835,7 @@
 						</p>
 					</div>
 
-					<div
-						style="
-							display: grid;
-							grid-template-columns: 1fr 340px;
-							gap: 1.5rem;
-							align-items: start;
-						"
-					>
+					<div class="placement-layout">
 						<div
 							class="form-card"
 							style="padding: 0"
@@ -2150,12 +2852,7 @@
 							></div>
 						</div>
 
-						<div
-							style="
-								display: grid;
-								gap: 1rem;
-							"
-						>
+						<div class="placement-side">
 							<div class="form-card">
 								<h2
 									class="page-title"
@@ -2214,6 +2911,11 @@
 											0;
 										font-size: 0.8rem;
 									"
+								></p>
+								<p
+									id="placement-question-warning"
+									class="placement-warning hidden"
+									role="alert"
 								></p>
 							</div>
 
@@ -2339,6 +3041,70 @@
 			<!-- /console-content -->
 		</main>
 
+		<!-- Moderation action modal -->
+		<div
+			id="mod-modal-overlay"
+			class="modal-overlay hidden"
+			role="dialog"
+			aria-modal="true"
+		>
+			<div class="modal">
+				<h2 class="modal-title" id="mod-modal-title">
+					Apply moderation action
+				</h2>
+				<p id="mod-modal-body" class="modal-body"></p>
+				<div class="field" style="margin-top: 1rem">
+					<label for="mod-reason">
+						Reason (visible to player on
+						appeal)
+					</label>
+					<textarea
+						id="mod-reason"
+						rows="3"
+						placeholder="Explain what was flagged and why this tier…"
+					></textarea>
+				</div>
+				<div
+					class="field"
+					id="mod-duration-field"
+					style="margin-top: 0.75rem"
+				>
+					<label for="mod-duration">
+						Duration (days)
+					</label>
+					<input
+						id="mod-duration"
+						type="number"
+						min="1"
+						max="90"
+						placeholder="3"
+					/>
+				</div>
+				<p
+					id="mod-recommended"
+					class="page-subtitle"
+					style="
+						margin-top: 0.5rem;
+						color: var(--accent);
+					"
+				></p>
+				<div class="modal-actions">
+					<button
+						class="btn btn-ghost"
+						id="mod-modal-cancel"
+					>
+						Cancel
+					</button>
+					<button
+						class="btn btn-primary"
+						id="mod-modal-confirm"
+					>
+						Confirm
+					</button>
+				</div>
+			</div>
+		</div>
+
 		<div
 			id="modal-overlay"
 			class="modal-overlay hidden"
@@ -2425,5 +3191,13 @@
 
 		<script type="module" src="../js/console.js"></script>
 		<script type="module" src="../js/placement-console.js"></script>
+
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			attachHelpButton('btn-help', currentPageKey())
+		</script>
 	</body>
 </html>
