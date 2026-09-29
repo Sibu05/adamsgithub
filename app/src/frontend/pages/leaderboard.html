@@ -220,6 +220,14 @@
 						class="admin-badge hidden"
 					></span>
 					<button
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
+					>
+						?
+					</button>
+					<button
 						id="btn-logout"
 						class="btn btn-sm btn-header hidden"
 					>
@@ -368,5 +376,13 @@
 		</main>
 
 		<script type="module" src="../js/leaderboard.js"></script>
+	
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			attachHelpButton('btn-help', currentPageKey())
+		</script>
 	</body>
 </html>

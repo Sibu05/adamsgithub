@@ -129,6 +129,9 @@ export function eventPopupHTML(ev, state, opts) {
 		<div class="popup-desc">${esc(ev.description || 'No description.')}</div>
 		<div class="popup-meta">${metaPillsHTML(ev, state)}</div>
 		${eventActionHTML(ev, state, opts)}
+		<button class="popup-speak-btn" data-event-id="${Number(ev.event_id)}" aria-label="Read event aloud" title="Read aloud">
+			🔊 Speak
+		</button>
 	`
 }
 

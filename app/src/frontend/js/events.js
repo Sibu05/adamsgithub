@@ -683,6 +683,15 @@ function addSidebarCard(ev, inRange, lng, lat) {
 	elSidebar.appendChild(card)
 }
 
+// ── Voice-guide bridge ────────────────────────────────────────
+// The popup speaker button carries only the event id, so the voice
+// handler in events.html looks the full event row and the current
+// player position up through these two globals.
+window.__a2a_get_event = (eventId) =>
+	stopRefs.find((r) => Number(r.ev.event_id) === Number(eventId))
+		?.ev ?? null
+window.__a2a_get_player_lnglat = () => playerLatLng
+
 // ── Challenge handler ─────────────────────────────────────────
 window._challenge = async function (eventId) {
 	if (!currentUser) {
