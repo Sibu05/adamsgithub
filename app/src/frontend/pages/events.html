@@ -688,6 +688,14 @@
 				</nav>
 
 				<div class="header-right">
+					<button
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
+					>
+						?
+					</button>
 					<span
 						id="user-badge"
 						class="admin-badge hidden"
@@ -806,5 +814,36 @@
 		</div>
 
 		<script type="module" src="../js/events.js"></script>
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			import { announceEvent, speak } from '../js/voice-guide.js'
+			import { eventState } from '../js/event-status.js'
+
+			// Help button — content chosen from the current URL.
+			attachHelpButton('btn-help', currentPageKey())
+
+			// Voice guide: single delegated handler so the speaker
+			// button works no matter how many times the popup is
+			// rebuilt.
+			document.addEventListener('click', (e) => {
+				const btn = e.target.closest('.popup-speak-btn')
+				if (!btn) return
+				e.stopPropagation()
+				const eventId = Number(btn.dataset.eventId)
+				if (!eventId) return
+
+				const ev = window.__a2a_get_event?.(eventId)
+				if (!ev) {
+					speak('Sorry, I could not find that event.')
+					return
+				}
+				const player = window.__a2a_get_player_lnglat?.()
+				const state = eventState(ev, player)
+				announceEvent(ev, state)
+			})
+		</script>
 	</body>
 </html>
