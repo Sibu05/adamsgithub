@@ -3,6 +3,8 @@ import { get_player_location } from './geolocation.js'
 import { distance } from './general.js'
 import { updateAuthNav, logout } from './auth-helpers.js'
 import { get_location_for_challenge } from './qr-scanner.js'
+import { esc } from './utils.js'
+import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
@@ -17,6 +19,47 @@ import {
 
 const AUTH_API = `${API_BASE}/api/auth`
 const EVENT_API = `${API_BASE}/api/events`
+
+// ── Completed events ────────────────────────────────────────────
+// The server is authoritative (a `completed` flag on GET /api/events
+// for logged-in players). This localStorage mirror — same key as
+// main.js — covers the instant after a win before the next fetch, and
+// keeps the landing-page "next suggested" halo consistent.
+const COMPLETED_EVENTS_KEY = 'wits-quest:completed-events'
+
+function loadCompletedEventIds() {
+	try {
+		const raw = localStorage.getItem(COMPLETED_EVENTS_KEY)
+		return new Set(raw ? JSON.parse(raw) : [])
+	} catch {
+		return new Set()
+	}
+}
+
+function isEventCompletedLocal(eventId) {
+	try {
+		return loadCompletedEventIds().has(String(eventId))
+	} catch {
+		return false
+	}
+}
+
+function markEventCompletedLocal(eventId) {
+	try {
+		const ids = loadCompletedEventIds()
+		ids.add(String(eventId))
+		localStorage.setItem(
+			COMPLETED_EVENTS_KEY,
+			JSON.stringify([...ids])
+		)
+	} catch {
+		// localStorage unavailable — server flag still applies on next fetch
+	}
+}
+
+function isEventDone(ev) {
+	return ev.completed === true || isEventCompletedLocal(ev.event_id)
+}
 
 // ── DOM ───────────────────────────────────────────────────────
 const btnLogout = document.getElementById('btn-logout')
@@ -261,9 +304,14 @@ function clearMarkers() {
 	activeMarkers.forEach((m) => m.remove())
 	activeMarkers = []
 	stopRefs.length = 0
-	// Keep sidebar header, remove event cards
+	if (activePopup) {
+		activePopup.remove()
+		activePopup = null
+	}
+	// Keep sidebar header, remove event cards + next-up banner
 	const cards = elSidebar.querySelectorAll('.sidebar-event')
 	cards.forEach((c) => c.remove())
+	elSidebar.querySelector('#sidebar-next')?.remove()
 }
 
 function makeStopMarker(ev, inRange) {
@@ -287,28 +335,23 @@ function refreshAllStopsProximity() {
 		ref.bobEl.style.transform = `scale(${(1 + 0.4 * t).toFixed(3)})`
 		ref.bobEl.style.setProperty('--pg', t.toFixed(3))
 
-		const inRange = d <= (ref.ev.radius_meters || 60)
+		const state = eventState(ref.ev, playerLatLng)
+		const inRange = state.inRange
 		if (ref.inRange !== inRange) {
 			ref.inRange = inRange
 			ref.el.classList.toggle('gym', inRange)
 			if (ref.cubeSpan) {
 				ref.cubeSpan.textContent = inRange ? '⚡' : '🏛️'
 			}
-			const card = elSidebar.querySelector(
-				`.sidebar-event[data-id="${ref.ev.event_id}"]`
-			)
-			if (card) {
-				const pill = card.querySelector(
-					'.sidebar-event-meta .meta-pill'
-				)
-				if (pill) {
-					pill.className = `meta-pill${inRange ? ' active' : ''}`
-					pill.textContent = inRange
-						? '✓ In range'
-						: 'Out of range'
-				}
-			}
 		}
+		// Distance changes on every move, so refresh the card's badges.
+		const meta = elSidebar.querySelector(
+			`.sidebar-event[data-id="${ref.ev.event_id}"] .sidebar-event-meta`
+		)
+		if (meta)
+			meta.innerHTML = metaPillsHTML(ref.ev, state, {
+				rangeFirst: true,
+			})
 
 		if (activePopup && activePopup === ref.popup) {
 			activePopup.setHTML(
@@ -355,8 +398,9 @@ function circleCoords(lng, lat, radiusMeters, steps = 48) {
 }
 
 // Translucent trigger-radius discs under each stop (same as main map).
+// Re-renders on every load so discs for newly-completed events disappear.
 function renderProximityCircles(events) {
-	if (!map || map.getSource('event-radii')) return
+	if (!map) return
 	const features = events
 		.filter((ev) => {
 			const lng = parseFloat(ev.longitude)
@@ -377,10 +421,16 @@ function renderProximityCircles(events) {
 				],
 			},
 		}))
+	const collection = { type: 'FeatureCollection', features }
+	const existing = map.getSource('event-radii')
+	if (existing) {
+		existing.setData(collection)
+		return
+	}
 	if (!features.length) return
 	map.addSource('event-radii', {
 		type: 'geojson',
-		data: { type: 'FeatureCollection', features },
+		data: collection,
 	})
 	map.addLayer({
 		id: 'event-radii-fill',
@@ -404,40 +454,100 @@ function renderProximityCircles(events) {
 	})
 }
 
+// Popup markup is shared with the main map (js/event-status.js): live
+// status, range, distance/radius, points — and the Attempt button only
+// when the event is live AND the player is inside its radius.
 function buildPopupHTML(ev, inRange, onCampus = false) {
-	const rangePill = inRange
-		? `<span class="meta-pill active">✓ In range</span>`
-		: `<span class="meta-pill">Out of range</span>`
+	return eventPopupHTML(ev, eventState(ev, playerLatLng), {
+		onCampus,
+		onAttempt: 'window._challenge',
+	})
+}
 
-	// Stops are visible and tappable worldwide; playing needs campus.
-	// On campus but outside the event radius → walk closer.
-	// Anywhere else (or no fix yet) → campus gate message.
-	const action = inRange
-		? `<button class="popup-challenge-btn" onclick="window._challenge(${ev.event_id})">⚡ Attempt Challenge</button>`
-		: onCampus
-			? `<p class="popup-out-of-range">Walk closer to attempt this challenge.</p>`
-			: `<p class="popup-out-of-range">🏛️ You need to be on Wits campus to attempt this challenge.</p>`
+// ── Next-up banner ────────────────────────────────────────────
+// Points the player at the nearest event they haven't done yet.
+function formatDistance(meters) {
+	if (meters == null || isNaN(meters)) return ''
+	if (meters < 1000) return `${Math.round(meters)}m away`
+	return `${(meters / 1000).toFixed(1)}km away`
+}
 
-	return `
-		<div class="popup-title">${ev.title}</div>
-		<div class="popup-desc">${ev.description || 'No description.'}</div>
-		<div class="popup-meta">
-			<span class="meta-pill active">Active</span>
-			${rangePill}
-			<span class="meta-pill">📍 ${ev.radius_meters}m</span>
-			<span class="meta-pill gold">⚡ ${ev.point_reward} pts</span>
-		</div>
-		${action}
+function renderNextUp(undoneEvents, playerLoc, doneCount = 0) {
+	const header = elSidebar.querySelector('.sidebar-header')
+	if (!header) return
+	const banner = document.createElement('div')
+	banner.id = 'sidebar-next'
+
+	if (!undoneEvents.length) {
+		banner.className = 'sidebar-next done'
+		banner.innerHTML = `
+			<div class="sidebar-next-title">🎉 All caught up!</div>
+			<div class="sidebar-next-sub">You've completed every active event — new ones will appear here.</div>
+		`
+		header.after(banner)
+		return
+	}
+
+	const progress =
+		doneCount > 0
+			? `<div class="sidebar-next-progress">${doneCount} completed · ${undoneEvents.length} to go</div>`
+			: ''
+
+	let next = undoneEvents[0]
+	let nextDist = null
+	if (playerLoc) {
+		let best = Infinity
+		for (const ev of undoneEvents) {
+			const lat = parseFloat(ev.latitude)
+			const lng = parseFloat(ev.longitude)
+			if (isNaN(lat) || isNaN(lng)) continue
+			const d = distance(
+				{
+					latitude: playerLoc[0],
+					longitude: playerLoc[1],
+				},
+				{ latitude: lat, longitude: lng }
+			)
+			if (d < best) {
+				best = d
+				next = ev
+			}
+		}
+		nextDist = best === Infinity ? null : best
+	}
+
+	banner.className = 'sidebar-next'
+	banner.innerHTML = `
+		<div class="sidebar-next-title">➡️ Next up: ${esc(next.title)}</div>
+		<div class="sidebar-next-sub">${nextDist != null ? `${esc(formatDistance(nextDist))} · ` : ''}⚡ ${esc(String(next.point_reward))} pts · 📍 ${esc(String(next.radius_meters))}m — tap to go</div>
+		${progress}
 	`
+	banner.addEventListener('click', () => {
+		const lng = parseFloat(next.longitude)
+		const lat = parseFloat(next.latitude)
+		if (isNaN(lng) || isNaN(lat)) return
+		map.flyTo({ center: [lng, lat], zoom: 18, duration: 600 })
+		const ref = stopRefs.find(
+			(r) => r.ev.event_id === next.event_id
+		)
+		if (ref) openStopPopup(ref)
+	})
+	header.after(banner)
 }
 
 // ── Load events ───────────────────────────────────────────────
+// Completed events are hidden; the banner points at what's left.
 async function loadEvents() {
 	clearMarkers()
 	elError.classList.add('hidden')
 
 	try {
-		const res = await fetch(EVENT_API, { cache: 'no-store' })
+		// credentials: logged-in players get a per-event `completed`
+		// flag; anonymous players get the plain list as before.
+		const res = await fetch(EVENT_API, {
+			cache: 'no-store',
+			credentials: 'include',
+		})
 		if (!res.ok)
 			throw new Error(`Server responded with ${res.status}`)
 		const events = await res.json()
@@ -448,6 +558,15 @@ async function loadEvents() {
 			elError.textContent =
 				'No active events right now — check back later.'
 			elError.classList.remove('hidden')
+			return
+		}
+
+		const undone = events.filter((ev) => !isEventDone(ev))
+		const doneCount = events.length - undone.length
+
+		if (!undone.length) {
+			renderProximityCircles([])
+			renderNextUp([], null)
 			return
 		}
 
@@ -469,7 +588,7 @@ async function loadEvents() {
 			? isInsideCampus(playerLoc[1], playerLoc[0])
 			: false
 
-		for (const ev of events) {
+		for (const ev of undone) {
 			const lng = parseFloat(ev.longitude)
 			const lat = parseFloat(ev.latitude)
 			if (isNaN(lng) || isNaN(lat)) continue
@@ -527,8 +646,9 @@ async function loadEvents() {
 			addSidebarCard(ev, inRange, lng, lat)
 		}
 
-		renderProximityCircles(events)
+		renderProximityCircles(undone)
 		refreshAllStopsProximity()
+		renderNextUp(undone, playerLoc, doneCount)
 	} catch (err) {
 		elLoading.classList.add('hidden')
 		elError.textContent = `Could not load events — ${err.message}`
@@ -542,12 +662,12 @@ function addSidebarCard(ev, inRange, lng, lat) {
 	card.dataset.id = ev.event_id
 
 	card.innerHTML = `
-		<div class="sidebar-event-title">${ev.title}</div>
-		<div class="sidebar-event-meta">
-			<span class="meta-pill${inRange ? ' active' : ''}">${inRange ? '✓ In range' : 'Out of range'}</span>
-			<span class="meta-pill gold">⚡ ${ev.point_reward} pts</span>
-			<span class="meta-pill">📍 ${ev.radius_meters}m</span>
-		</div>
+		<div class="sidebar-event-title">${esc(ev.title)}</div>
+		<div class="sidebar-event-meta">${metaPillsHTML(
+			ev,
+			{ ...eventState(ev, playerLatLng), inRange },
+			{ rangeFirst: true }
+		)}</div>
 	`
 
 	card.addEventListener('click', () => {
@@ -662,9 +782,26 @@ function showTriviaModal(eventId, trivia) {
 	const timeLimit = trivia.time_limit_s || 30
 	const startTime = Date.now()
 
-	const optionsHtml = trivia.options
-		.map(
-			(opt) => `
+	// FILL_BLANK: no options are sent — the player types the answer.
+	const isFillBlank = trivia.format === 'FILL_BLANK'
+	const fillBlankHtml = `
+		<form id="trivia-fill-form" style="display:flex;gap:8px;margin:6px 0;">
+			<input id="trivia-fill-input" type="text" autocomplete="off" required
+				placeholder="Type your answer" aria-label="Your answer"
+				style="flex:1;padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);
+					background:var(--surface-2);color:var(--text);font-family:var(--font-body);font-size:0.875rem;" />
+			<button type="submit" class="trivia-option-btn"
+				style="padding:10px 14px;border-radius:var(--radius);border:1px solid var(--border);
+					background:var(--surface-2);color:var(--text);cursor:pointer;font-family:var(--font-body);">
+				Submit
+			</button>
+		</form>
+	`
+	const optionsHtml = isFillBlank
+		? fillBlankHtml
+		: trivia.options
+				.map(
+					(opt) => `
 		<button data-option-id="${opt.option_id}" class="trivia-option-btn"
 			style="display:block;width:100%;margin:6px 0;padding:10px 14px;
 				border-radius:var(--radius);border:1px solid var(--border);
@@ -676,8 +813,8 @@ function showTriviaModal(eventId, trivia) {
 			${opt.body}
 		</button>
 	`
-		)
-		.join('')
+				)
+				.join('')
 
 	const overlay = document.createElement('div')
 	overlay.id = 'trivia-overlay'
@@ -718,9 +855,34 @@ function showTriviaModal(eventId, trivia) {
 		}
 	)
 
+	overlay.querySelector('#trivia-fill-form')?.addEventListener(
+		'submit',
+		(e) => {
+			e.preventDefault()
+			const input =
+				overlay.querySelector('#trivia-fill-input')
+			const text = input.value.trim()
+			if (!text) return
+			const elapsed = Date.now() - startTime
+			clearInterval(timerInterval)
+			input.disabled = true
+			overlay.querySelectorAll('.trivia-option-btn').forEach(
+				(b) => (b.disabled = true)
+			)
+			window._submitAnswer(
+				eventId,
+				trivia.question_id,
+				null,
+				elapsed,
+				text
+			)
+		}
+	)
+
 	overlay.querySelector('#trivia-options').addEventListener(
 		'click',
 		(e) => {
+			if (isFillBlank) return // handled by the form's submit
 			const btn = e.target.closest('.trivia-option-btn')
 			if (!btn) return
 			const optionId = parseInt(btn.dataset.optionId, 10)
@@ -771,9 +933,10 @@ window._submitAnswer = async function (
 	eventId,
 	questionId,
 	optionId,
-	answerTimeMs
+	answerTimeMs,
+	answerText = null
 ) {
-	if (!optionId) {
+	if (!optionId && !answerText) {
 		document.getElementById('trivia-overlay')?.remove()
 		showResultModal({
 			is_correct: false,
@@ -800,9 +963,10 @@ window._submitAnswer = async function (
 		const body = {
 			event_id: eventId,
 			question_id: questionId,
-			selected_option_id: optionId,
 			answer_time_ms: answerTimeMs ?? 1500,
 		}
+		if (answerText) body.answer_text = answerText
+		else body.selected_option_id = optionId
 		if (lat !== null) body.claimed_lat = lat
 		if (lng !== null) body.claimed_lng = lng
 		const res = await fetch(`${API_BASE}/api/trivia/submit`, {
@@ -818,6 +982,13 @@ window._submitAnswer = async function (
 		const data = await res.json()
 		document.getElementById('trivia-overlay')?.remove()
 		showResultModal({ ...data, answer_time_ms: answerTimeMs })
+		// Counted win: hide this event and point at the next one.
+		// (location_verified matters — a correct-but-too-far answer
+		// does not count and must not hide the event.)
+		if (data.is_correct && data.location_verified) {
+			markEventCompletedLocal(eventId)
+			loadEvents()
+		}
 	} catch {
 		alert('Failed to submit answer.')
 	}
@@ -866,6 +1037,7 @@ function showResultModal(data) {
 		card_awarded,
 		awarded_card,
 		already_earned_card,
+		already_completed,
 		answer_time_ms,
 	} = data
 
@@ -933,6 +1105,13 @@ function showResultModal(data) {
 		</div>`
 	}
 
+	const replayHtml =
+		is_correct && already_completed
+			? `<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem;">
+			🎓 Practice run — you've already completed this event, no new points.
+		</div>`
+			: ''
+
 	const overlay = document.createElement('div')
 	overlay.id = 'result-overlay'
 	overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,0.5);
@@ -953,7 +1132,7 @@ function showResultModal(data) {
 				}
 			</div>
 			<div style="padding:1.25rem 1.5rem;">
-				${pointsHtml}${correctHtml}${cardHtml}
+				${pointsHtml}${correctHtml}${cardHtml}${replayHtml}
 				<button id="result-close" style="width:100%;background:var(--accent);color:#fff;
 					border:none;border-radius:var(--radius);padding:0.6rem 1rem;
 					font-size:0.875rem;font-weight:600;cursor:pointer;font-family:var(--font-body);">

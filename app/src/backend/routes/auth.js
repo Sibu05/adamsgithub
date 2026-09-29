@@ -1,16 +1,12 @@
 import express from 'express'
-import crypto from 'crypto'
 import pool from '../utils/db.js'
+import { hashPin, verifyPin, isValidPin } from '../utils/pin_hash.js'
+import { createLoginLimiter } from '../utils/login_limiter.js'
 
 const router = express.Router()
 
-function hashPin(pin) {
-	return crypto
-		.createHash('sha256')
-		.update(String(pin))
-		.digest('hex')
-		.toLowerCase()
-}
+// Failed username + PIN logins, per ip+username and per ip.
+export const loginLimiter = createLoginLimiter()
 
 router.use((req, res, next) => {
 	console.log(
@@ -31,6 +27,15 @@ router.post('/login', async (req, res) => {
 			.json({ error: 'email and pin are required' })
 	}
 
+	const ip = req.ip
+	const waitMs = loginLimiter.retryAfterMs(ip, userEmail)
+	if (waitMs > 0) {
+		res.set('Retry-After', String(Math.ceil(waitMs / 1000)))
+		return res.status(429).json({
+			error: `Too many failed attempts. Try again in ${Math.ceil(waitMs / 60000)} minute(s).`,
+		})
+	}
+
 	try {
 		const [users] = await pool.query(
 			'SELECT user_id, name, email FROM users WHERE LOWER(email) = ?',
@@ -38,6 +43,7 @@ router.post('/login', async (req, res) => {
 		)
 
 		if (!users.length) {
+			loginLimiter.recordFailure(ip, userEmail)
 			return res
 				.status(401)
 				.json({ error: 'Invalid credentials' })
@@ -50,13 +56,32 @@ router.post('/login', async (req, res) => {
 			[user.user_id]
 		)
 
-		if (
-			!creds.length ||
-			creds[0].pin_hash.toLowerCase() !== hashPin(inputPin)
-		) {
+		const { ok, needsRehash } = await verifyPin(
+			inputPin,
+			creds[0]?.pin_hash
+		)
+		if (!ok) {
+			loginLimiter.recordFailure(ip, userEmail)
 			return res
 				.status(401)
 				.json({ error: 'Invalid credentials' })
+		}
+		loginLimiter.recordSuccess(ip, userEmail)
+
+		// Upgrade a legacy unsalted SHA-256 hash to scrypt now that we
+		// have the plain PIN. A failure here must not block the login.
+		if (needsRehash) {
+			try {
+				await pool.query(
+					'UPDATE user_credentials SET pin_hash = ? WHERE user_id = ?',
+					[await hashPin(inputPin), user.user_id]
+				)
+			} catch (err) {
+				console.warn(
+					'[auth] PIN hash upgrade failed:',
+					err.message
+				)
+			}
 		}
 
 		// Store session
@@ -95,6 +120,20 @@ router.post('/register', async (req, res) => {
 			error: 'name, email, and password/pin are required',
 		})
 	}
+	// The username is stored in users.email, which Google sign-in also
+	// uses. An email-looking username could claim someone else's
+	// address, so new usernames can't contain '@'. (Login still accepts
+	// older accounts that have one.)
+	if (userEmail.includes('@')) {
+		return res.status(400).json({
+			error: "Usernames can't contain '@' — to sign in with an email address, use Google.",
+		})
+	}
+	if (!isValidPin(String(inputPin))) {
+		return res
+			.status(400)
+			.json({ error: 'PIN must be 4 to 6 digits' })
+	}
 
 	try {
 		const [existing] = await pool.query(
@@ -115,7 +154,7 @@ router.post('/register', async (req, res) => {
 		)
 
 		const userId = result.insertId
-		const hashedPin = hashPin(inputPin)
+		const hashedPin = await hashPin(String(inputPin))
 
 		await pool.query(
 			'INSERT INTO user_credentials (user_id, pin_hash) VALUES (?, ?)',

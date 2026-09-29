@@ -1,5 +1,5 @@
 import pool from '../utils/db.js'
-import { BATTLE_DECK_NO_CARDS } from './battle_socket.js'
+import { BATTLE_DECK_NO_CARDS } from '../utils/battle.js'
 
 const battle_states = new Map()
 
@@ -72,4 +72,8 @@ export function get_battle_state(battle_id) {
 
 export function clear_battle_state(battle_id) {
 	battle_states.delete(battle_id)
+}
+
+export function list_battle_states() {
+	return [...battle_states.values()]
 }

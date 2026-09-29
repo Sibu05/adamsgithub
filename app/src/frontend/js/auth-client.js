@@ -43,7 +43,12 @@ export async function usernameSignUp(name, username, pin) {
 }
 
 export async function googleSignIn() {
-	const callbackURL = window.location.pathname + window.location.search
+	// Back to the main map after Google — the same page username + PIN
+	// login lands players on (redirectAfterLogin in auth-helpers.js).
+	// Errors return to wherever the player started.
+	const callbackURL = '/'
+	const errorCallbackURL =
+		window.location.pathname + window.location.search
 
 	try {
 		const res = await fetch(`${AUTH_API}/sign-in/social`, {
@@ -55,7 +60,7 @@ export async function googleSignIn() {
 			body: JSON.stringify({
 				provider: 'google',
 				callbackURL,
-				errorCallbackURL: callbackURL,
+				errorCallbackURL,
 				newUserCallbackURL: callbackURL,
 			}),
 		})
@@ -77,9 +82,12 @@ export async function googleSignIn() {
 		}
 
 		window.location.href = data.url
+		return { data: { url: data.url }, error: null }
 	} catch (error) {
+		// Same { data, error } shape as usernameSignIn/usernameSignUp;
+		// the auth drawer shows error.message to the player.
 		console.error('Google sign-in failed:', error)
-		alert(`Google sign-in failed: ${error.message}`)
+		return { data: null, error }
 	}
 }
 

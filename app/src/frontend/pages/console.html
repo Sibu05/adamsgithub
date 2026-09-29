@@ -10,6 +10,14 @@
 		<link rel="stylesheet" href="../css/style.css" />
 		<link rel="stylesheet" href="../css/account-menu.css" />
 		<link rel="stylesheet" href="../css/console-tabs.css" />
+		<link rel="stylesheet" href="../css/placement-console.css" />
+
+		<!-- MapLibre GL JS — only used by the Placement tab's map -->
+		<link
+			href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css"
+			rel="stylesheet"
+		/>
+		<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 	</head>
 	<body>
 		<header class="site-header">
@@ -24,7 +32,7 @@
 				</a>
 				<nav class="header-nav" id="header-nav">
 					<a
-						href="events.html"
+						href="/"
 						class="nav-link hidden"
 						id="nav-events"
 					>
@@ -206,8 +214,8 @@
 			<div id="access-denied" class="access-denied hidden">
 				<h2>Access Denied</h2>
 				<p>
-					You need an Event Author or Super Admin
-					role to use this console.
+					You need an Event Author, Moderator, or
+					Super Admin role to use this console.
 				</p>
 				<button
 					class="btn btn-ghost"
@@ -244,6 +252,18 @@
 						data-tab="insights"
 					>
 						Insights
+					</button>
+					<button
+						class="tab-btn"
+						data-tab="moderation"
+					>
+						Moderation
+					</button>
+					<button
+						class="tab-btn"
+						data-tab="placement"
+					>
+						Placement
 					</button>
 				</nav>
 
@@ -384,6 +404,22 @@
 									</option>
 								</select>
 							</div>
+							<label
+								class="toolbar-toggle"
+								for="toggle-past-popups"
+								title="Pop-ups the rotation job has retired or archived. Hidden by default; still stored for history and analytics."
+							>
+								<input
+									type="checkbox"
+									id="toggle-past-popups"
+								/>
+								Show past
+								pop-ups
+								<span
+									class="section-count"
+									id="past-popups-count"
+								></span>
+							</label>
 						</div>
 
 						<div id="event-list"></div>
@@ -959,7 +995,7 @@
 														id="q-correct"
 														type="text"
 														list="q-option-list"
-														placeholder="For true/false use 'true' or 'false'"
+														placeholder="Type one of the options above exactly"
 													/>
 													<datalist
 														id="q-option-list"
@@ -1988,17 +2024,20 @@
 				<!-- /tab-campaigns -->
 
 				<!-- ═══════════════════════════════════════════
-				     INSIGHTS TAB (stale + hard questions)
+				     INSIGHTS TAB (User Story 10: analytics dashboard)
+				     Engagement · Question difficulty · Card drop rates
+				     + legacy curation (stale + hard questions)
 				════════════════════════════════════════════ -->
 				<div id="tab-insights" class="hidden">
 					<div class="page-header">
 						<h1 class="page-title">
-							Curation Insights
+							Analytics Dashboard
 						</h1>
 						<p class="page-subtitle">
-							Questions everybody gets
-							wrong · Old events to
-							retire
+							Engagement per event ·
+							Question difficulty ·
+							Card drop rates ·
+							Curation
 						</p>
 					</div>
 					<div style="display: grid; gap: 1.5rem">
@@ -2011,6 +2050,338 @@
 								flex-wrap: wrap;
 							"
 						></div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Engagement
+										—
+										attempts
+										/
+										visits
+										per
+										event
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Which
+										locations
+										and
+										events
+										draw
+										players,
+										which
+										are
+										ignored.
+										Reads
+										existing
+										attempt
+										+
+										location
+										logs.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+								>
+									<label
+										for="engagement-sort"
+									>
+										Sort
+									</label>
+									<select
+										id="engagement-sort"
+										class="sort-select"
+									>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+										<option
+											value="unique_players-desc"
+										>
+											Most
+											players
+										</option>
+										<option
+											value="visits-desc"
+										>
+											Most
+											visits
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Highest
+											correct
+											rate
+										</option>
+										<option
+											value="correct_rate-asc"
+										>
+											Lowest
+											correct
+											rate
+										</option>
+										<option
+											value="title-asc"
+										>
+											Title
+											A–Z
+										</option>
+										<option
+											value="last_activity-desc"
+										>
+											Recently
+											active
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="engagement-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="engagement-list"
+								class="event-list"
+							></ul>
+							<div
+								id="engagement-empty"
+								class="state-msg hidden"
+							>
+								No engagement
+								data yet (no
+								attempts
+								logged).
+							</div>
+						</div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Question
+										difficulty
+										—
+										correct
+										rate
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+									>
+										Too
+										hard
+										(≥60%
+										wrong)
+										or
+										too
+										easy
+										(≥90%
+										correct)
+										to
+										be
+										worth
+										asking.
+									</p>
+								</div>
+								<div
+									class="toolbar-sort"
+									style="
+										display: flex;
+										gap: 0.5rem;
+										flex-wrap: wrap;
+									"
+								>
+									<select
+										id="difficulty-filter"
+										class="sort-select"
+										aria-label="Difficulty filter"
+									>
+										<option
+											value="all"
+										>
+											All
+											flags
+										</option>
+										<option
+											value="too_hard"
+										>
+											Too
+											hard
+										</option>
+										<option
+											value="too_easy"
+										>
+											Too
+											easy
+										</option>
+										<option
+											value="ok"
+										>
+											OK
+										</option>
+										<option
+											value="ignored"
+										>
+											Ignored
+											(0
+											attempts)
+										</option>
+									</select>
+									<select
+										id="difficulty-sort"
+										class="sort-select"
+										aria-label="Difficulty sort"
+									>
+										<option
+											value="correct_rate-asc"
+										>
+											Hardest
+											first
+										</option>
+										<option
+											value="correct_rate-desc"
+										>
+											Easiest
+											first
+										</option>
+										<option
+											value="attempts-desc"
+										>
+											Most
+											attempts
+										</option>
+									</select>
+								</div>
+							</div>
+							<div
+								id="difficulty-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="difficulty-list"
+								class="event-list"
+							></ul>
+							<div
+								id="difficulty-empty"
+								class="state-msg hidden"
+							>
+								No questions
+								match this
+								filter yet.
+							</div>
+						</div>
+						<div class="form-card">
+							<div
+								style="
+									display: flex;
+									align-items: baseline;
+									justify-content: space-between;
+									flex-wrap: wrap;
+									gap: 0.75rem;
+								"
+							>
+								<div>
+									<h2
+										class="page-title"
+										style="
+											font-size: 1.15rem;
+										"
+									>
+										Card
+										drop
+										rates
+										—
+										actual
+										vs
+										intended
+									</h2>
+									<p
+										class="page-subtitle"
+										style="
+											margin-bottom: 0.75rem;
+										"
+										id="droprate-subtitle"
+									>
+										Actual
+										issuance
+										rate
+										per
+										card
+										vs
+										configured
+										pool
+										weight
+										/
+										rarity.
+									</p>
+								</div>
+								<button
+									class="btn btn-ghost btn-sm"
+									id="btn-droprate-refresh"
+									type="button"
+								>
+									↻
+									Refresh
+								</button>
+							</div>
+							<div
+								id="droprate-loading"
+								class="state-msg"
+							>
+								Loading…
+							</div>
+							<ul
+								id="droprate-list"
+								class="event-list"
+							></ul>
+							<div
+								id="droprate-empty"
+								class="state-msg hidden"
+							>
+								No cards issued
+								yet.
+							</div>
+						</div>
 						<div class="form-card">
 							<h2
 								class="page-title"
@@ -2094,9 +2465,384 @@
 					</div>
 				</div>
 				<!-- /tab-insights -->
+
+				<!-- ═══════════════════════════════════════════
+				     MODERATION TAB (User Story 5)
+				     Flagged players sorted by trust_score, evidence + graduated tiers
+				════════════════════════════════════════════ -->
+				<div id="tab-moderation" class="hidden">
+					<div
+						class="page-header"
+						style="
+							display: flex;
+							align-items: baseline;
+							justify-content: space-between;
+							flex-wrap: wrap;
+							gap: 1rem;
+						"
+					>
+						<div>
+							<h1 class="page-title">
+								Moderation Queue
+							</h1>
+							<p
+								class="page-subtitle"
+								id="mod-count"
+							>
+								Loading…
+							</p>
+						</div>
+						<button
+							class="btn btn-ghost btn-sm"
+							id="btn-mod-refresh"
+						>
+							↻ Refresh
+						</button>
+					</div>
+					<div id="mod-loading" class="state-msg">
+						Loading flagged players…
+					</div>
+					<div
+						id="mod-empty"
+						class="state-msg hidden"
+					>
+						No flagged players — everyone
+						looks trustworthy.
+					</div>
+					<div
+						id="mod-error"
+						class="state-msg error hidden"
+					></div>
+					<ul
+						id="mod-list"
+						class="event-list"
+					></ul>
+					<div
+						class="form-card"
+						style="margin-top: 1.5rem"
+					>
+						<h2
+							class="page-title"
+							style="
+								font-size: 1.15rem;
+							"
+						>
+							Recent actions
+						</h2>
+						<p
+							class="page-subtitle"
+							style="
+								margin-bottom: 0.75rem;
+							"
+						>
+							Audit trail of warnings
+							→ restrictions →
+							suspensions
+						</p>
+						<div
+							id="mod-actions-loading"
+							class="state-msg"
+						>
+							Loading…
+						</div>
+						<ul
+							id="mod-actions-list"
+							class="event-list"
+						></ul>
+						<div
+							id="mod-actions-empty"
+							class="state-msg hidden"
+						>
+							No actions yet.
+						</div>
+					</div>
+				</div>
+				<!-- /tab-moderation -->
+				PLACEMENT TAB
+				════════════════════════════════════════════ -->
+				<div id="tab-placement" class="hidden">
+					<div class="page-header">
+						<h1 class="page-title">
+							Procedural Placement
+						</h1>
+						<p class="page-subtitle">
+							Auto-placed pop-up
+							events along the campus
+							path graph — generate
+							new ones or run a full
+							rotation on demand.
+						</p>
+					</div>
+
+					<div class="placement-layout">
+						<div
+							class="form-card"
+							style="padding: 0"
+						>
+							<div
+								id="placement-map"
+								style="
+									height: 560px;
+									border-radius: var(
+										--radius-lg
+									);
+									overflow: hidden;
+								"
+							></div>
+						</div>
+
+						<div class="placement-side">
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Live
+									pop-ups
+								</h2>
+								<p
+									id="placement-live-count"
+									style="
+										font-size: 1.6rem;
+										font-weight: 800;
+										color: var(
+											--accent
+										);
+										margin: 0.25rem
+											0
+											0;
+									"
+								>
+									— / —
+								</p>
+
+								<div
+									style="
+										display: flex;
+										gap: 0.5rem;
+										margin-top: 0.85rem;
+										flex-wrap: wrap;
+									"
+								>
+									<button
+										class="btn btn-primary"
+										id="btn-placement-generate"
+									>
+										Generate
+										now
+									</button>
+									<button
+										class="btn btn-ghost"
+										id="btn-placement-rotate"
+									>
+										Rotate
+										now
+									</button>
+								</div>
+								<p
+									id="placement-action-msg"
+									class="hidden"
+									style="
+										margin: 0.6rem
+											0
+											0;
+										font-size: 0.8rem;
+									"
+								></p>
+								<p
+									id="placement-question-warning"
+									class="placement-warning hidden"
+									role="alert"
+								></p>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Config
+								</h2>
+								<div
+									id="placement-config-list"
+									style="
+										margin-top: 0.5rem;
+										font-size: 0.85rem;
+									"
+								></div>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Active
+									events
+								</h2>
+								<ul
+									id="placement-events-list"
+									style="
+										margin-top: 0.25rem;
+										list-style: none;
+										padding: 0;
+									"
+								></ul>
+							</div>
+
+							<div class="form-card">
+								<h2
+									class="page-title"
+									style="
+										font-size: 1.1rem;
+									"
+								>
+									Recent
+									runs
+								</h2>
+								<table
+									style="
+										width: 100%;
+										border-collapse: collapse;
+										margin-top: 0.5rem;
+										font-size: 0.78rem;
+									"
+								>
+									<thead>
+										<tr
+											style="
+												text-align: left;
+												color: var(
+													--text-muted
+												);
+											"
+										>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Run
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Started
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+												"
+											>
+												Status
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+													text-align: right;
+												"
+											>
+												Retired
+											</th>
+											<th
+												style="
+													padding: 0.3rem
+														0;
+													text-align: right;
+												"
+											>
+												Created
+											</th>
+										</tr>
+									</thead>
+									<tbody
+										id="placement-runs-body"
+									></tbody>
+								</table>
+							</div>
+						</div>
+					</div>
+				</div>
+				<!-- /tab-placement -->
 			</div>
 			<!-- /console-content -->
 		</main>
+
+		<!-- Moderation action modal -->
+		<div
+			id="mod-modal-overlay"
+			class="modal-overlay hidden"
+			role="dialog"
+			aria-modal="true"
+		>
+			<div class="modal">
+				<h2 class="modal-title" id="mod-modal-title">
+					Apply moderation action
+				</h2>
+				<p id="mod-modal-body" class="modal-body"></p>
+				<div class="field" style="margin-top: 1rem">
+					<label for="mod-reason">
+						Reason (visible to player on
+						appeal)
+					</label>
+					<textarea
+						id="mod-reason"
+						rows="3"
+						placeholder="Explain what was flagged and why this tier…"
+					></textarea>
+				</div>
+				<div
+					class="field"
+					id="mod-duration-field"
+					style="margin-top: 0.75rem"
+				>
+					<label for="mod-duration">
+						Duration (days)
+					</label>
+					<input
+						id="mod-duration"
+						type="number"
+						min="1"
+						max="90"
+						placeholder="3"
+					/>
+				</div>
+				<p
+					id="mod-recommended"
+					class="page-subtitle"
+					style="
+						margin-top: 0.5rem;
+						color: var(--accent);
+					"
+				></p>
+				<div class="modal-actions">
+					<button
+						class="btn btn-ghost"
+						id="mod-modal-cancel"
+					>
+						Cancel
+					</button>
+					<button
+						class="btn btn-primary"
+						id="mod-modal-confirm"
+					>
+						Confirm
+					</button>
+				</div>
+			</div>
+		</div>
 
 		<div
 			id="modal-overlay"
@@ -2183,5 +2929,6 @@
 		</div>
 
 		<script type="module" src="../js/console.js"></script>
+		<script type="module" src="../js/placement-console.js"></script>
 	</body>
 </html>
