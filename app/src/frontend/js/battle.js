@@ -71,6 +71,9 @@ const elListError = document.getElementById('list-error')
 const btnLogout = document.getElementById('btn-logout')
 
 var battleDeckCount = 0
+// Whether the Start-battle click handler is bound yet (loadSelectionEvents
+// runs once per battle, so without this the handler stacks).
+var battleStartBound = false
 const battleDeck = Array.from({ length: BATTLE_DECK_NO_CARDS }, (_, index) => {
 	const slotIndex = index + 1
 	return {
@@ -948,9 +951,15 @@ async function loadSelectionEvents() {
 			li.addEventListener('click', (el) => addToDeck(card))
 		}
 
-		elBattleStart.addEventListener('click', () =>
-			submitDeck(battleDeck.map((x) => x.card))
-		)
+		// The Start button lives across battles while this runs once per
+		// battle setup — bind it only the first time, otherwise every
+		// visit stacks another listener and one click sends N decks.
+		if (!battleStartBound) {
+			elBattleStart.addEventListener('click', () =>
+				submitDeck(battleDeck.map((x) => x.card))
+			)
+			battleStartBound = true
+		}
 	} catch (err) {
 		elListError.textContent = `Could not load events — ${err.message}`
 		elListError.classList.remove('hidden')
