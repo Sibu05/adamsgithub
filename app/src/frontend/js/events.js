@@ -1,5 +1,6 @@
 import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
+import { get_player_location_with_timeout } from './geolocation.js'
 import { distance } from './general.js'
 import { updateAuthNav, logout } from './auth-helpers.js'
 import { get_location_for_challenge } from './qr-scanner.js'
@@ -353,7 +354,11 @@ function refreshAllStopsProximity() {
 				rangeFirst: true,
 			})
 
-		if (activePopup && activePopup === ref.popup) {
+		if (
+			activePopup &&
+			activePopup === ref.popup &&
+			ref.popup.isOpen()
+		) {
 			activePopup.setHTML(
 				buildPopupHTML(ref.ev, inRange, onCampus)
 			)
@@ -528,7 +533,7 @@ function renderNextUp(undoneEvents, playerLoc, doneCount = 0) {
 		if (isNaN(lng) || isNaN(lat)) return
 		map.flyTo({ center: [lng, lat], zoom: 18, duration: 600 })
 		const ref = stopRefs.find(
-			(r) => r.ev.event_id === next.event_id
+			(r) => Number(r.ev.event_id) === Number(next.event_id)
 		)
 		if (ref) openStopPopup(ref)
 	})
@@ -537,7 +542,20 @@ function renderNextUp(undoneEvents, playerLoc, doneCount = 0) {
 
 // ── Load events ───────────────────────────────────────────────
 // Completed events are hidden; the banner points at what's left.
-async function loadEvents() {
+async function loadEvents({ force = false } = {}) {
+	// Don't yank markers while the player is reading a popup or
+	// mid-challenge — rebuilding here closed the tapped popup and
+	// re-added every pin, which looked like many events flashing by.
+	// The post-win reload passes force:true so a counted win still
+	// hides immediately even with the result modal open.
+	if (
+		!force &&
+		(document.getElementById('trivia-overlay') ||
+			document.getElementById('result-overlay') ||
+			document.getElementById('qr-overlay') ||
+			document.querySelector('.maplibregl-popup'))
+	)
+		return
 	clearMarkers()
 	elError.classList.add('hidden')
 
@@ -570,13 +588,17 @@ async function loadEvents() {
 			return
 		}
 
-		// Try player location for range check: prefer live coordinates if available
+		// Try player location for range check: prefer live coordinates if available.
+		// Give GPS 2.5 s so markers never wait out the full fix timeout.
 		let playerLoc = playerLatLng
 			? [playerLatLng[1], playerLatLng[0]]
 			: null
 		if (!playerLoc) {
 			try {
-				playerLoc = await get_player_location()
+				playerLoc =
+					await get_player_location_with_timeout(
+						2500
+					)
 			} catch {
 				/* fine */
 			}
@@ -619,6 +641,11 @@ async function loadEvents() {
 			const popup = new maplibregl.Popup({
 				offset: 25,
 				closeButton: true,
+			})
+			// If the player closes the popup via the X button, forget it
+			// so proximity refreshes don't rewrite a dead popup.
+			popup.on('close', () => {
+				if (activePopup === popup) activePopup = null
 			})
 
 			const ref = {
@@ -676,7 +703,9 @@ function addSidebarCard(ev, inRange, lng, lat) {
 			c.classList.remove('active')
 		)
 		card.classList.add('active')
-		const ref = stopRefs.find((r) => r.ev.event_id === ev.event_id)
+		const ref = stopRefs.find(
+			(r) => Number(r.ev.event_id) === Number(ev.event_id)
+		)
 		if (ref) openStopPopup(ref)
 	})
 
@@ -693,7 +722,7 @@ window.__a2a_get_event = (eventId) =>
 window.__a2a_get_player_lnglat = () => playerLatLng
 
 // ── Challenge handler ─────────────────────────────────────────
-window._challenge = async function (eventId) {
+window._challenge = async function (eventId, btnEl) {
 	if (!currentUser) {
 		// The session check may have failed on a network blip — retry
 		// once before treating the player as logged out.
@@ -704,7 +733,13 @@ window._challenge = async function (eventId) {
 		}
 	}
 
-	const btn = document.querySelector('.popup-challenge-btn')
+	// Disable the tapped button itself (passed as `this` from the popup
+	// markup) — not the first challenge button in the document, which
+	// may belong to a different event's popup.
+	const btn =
+		btnEl instanceof Element
+			? btnEl
+			: document.querySelector('.popup-challenge-btn')
 	if (btn) {
 		btn.disabled = true
 		btn.textContent = 'Verifying location…'
@@ -996,7 +1031,7 @@ window._submitAnswer = async function (
 		// does not count and must not hide the event.)
 		if (data.is_correct && data.location_verified) {
 			markEventCompletedLocal(eventId)
-			loadEvents()
+			loadEvents({ force: true })
 		}
 	} catch {
 		alert('Failed to submit answer.')

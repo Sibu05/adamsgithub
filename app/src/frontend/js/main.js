@@ -7,6 +7,7 @@ import {
 } from './auth-client.js'
 import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
+import { get_player_location_with_timeout } from './geolocation.js'
 import { suggestEventOrder } from './graph.js'
 import { redirectAfterLogin, updateAuthNav, logout } from './auth-helpers.js'
 import { initFeedback } from './feedback.js'
@@ -208,11 +209,21 @@ async function fetchCampusEvents() {
 		// Completed stops disappear — ordering, pins, and circles all
 		// run on the undone list only.
 		const todoEvents = dbEvents.filter((e) => !isDoneEvent(e))
-		const coords = await get_player_location() // returns [latitude, longitude]
-		const loc = {
-			latitude: coords[0],
-			longitude: coords[1],
+		// Don't let a hanging GPS fix delay the pins: give it 2.5 s,
+		// then order from campus home. Live proximity still corrects
+		// itself on the first real fix.
+		let coords = null
+		try {
+			coords = await get_player_location_with_timeout(2500) // returns [latitude, longitude]
+		} catch {
+			coords = null
 		}
+		const loc = coords
+			? { latitude: coords[0], longitude: coords[1] }
+			: {
+					latitude: CAMPUS_HOME[1],
+					longitude: CAMPUS_HOME[0],
+				}
 		const { order } = suggestEventOrder(todoEvents, loc)
 		suggestedOrder = order
 		refreshNextSuggested()
@@ -263,6 +274,16 @@ function eventPopupFor(ev) {
 	})
 }
 
+// Only one event popup may be visible at a time: tapping a new pin
+// closes any previously opened popup instead of stacking them.
+function closeOtherPopups(exceptPopup = null) {
+	for (const s of stopMarkers) {
+		if (s.popup !== exceptPopup && s.popup.isOpen()) {
+			s.popup.remove()
+		}
+	}
+}
+
 function renderEventSidebar(stops) {
 	const list = document.getElementById('sidebar-events')
 	if (!list) return
@@ -287,7 +308,9 @@ function renderEventSidebar(stops) {
 				zoom: Math.max(map.getZoom(), 18),
 				duration: 600,
 			})
+			closeOtherPopups(stop.popup)
 			if (!stop.popup.isOpen()) stop.marker.togglePopup()
+			refreshEventStates()
 		})
 		list.appendChild(card)
 	}
@@ -1444,7 +1467,9 @@ async function initializeApp() {
 						offset: 25,
 					}).setHTML(eventPopupFor(bld.ev))
 					// Rebuild on open so status/range are current.
+					// Close any other open popup first — one tap = one event.
 					popup.on('open', () => {
+						closeOtherPopups(popup)
 						popup.setHTML(
 							eventPopupFor(bld.ev)
 						)

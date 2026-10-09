@@ -235,23 +235,85 @@ describe('auth-helpers', () => {
 			btn.click()
 			expect(document.querySelector('.acct-menu')).toBeNull()
 		})
-		test('menu notifies on edit username soon', () => {
-			jest.useFakeTimers()
+		test('menu has no Settings item and edit username opens a modal', () => {
 			updateAuthNav({ name: 'D', roles: [] })
 			const btn = document.querySelector('.acct-avatar')
 			btn.click()
+			const labels = [
+				...document.querySelectorAll('.acct-menu-item'),
+			].map((el) => el.textContent)
+			expect(labels.some((t) => t.includes('Settings'))).toBe(
+				false
+			)
 			const item = [
 				...document.querySelectorAll('.acct-menu-item'),
 			].find((el) => el.textContent.includes('Edit username'))
 			expect(item).toBeDefined()
 			item.click()
-			// notify creates toast or acct-toast
-			const toast =
-				document.getElementById('toast') ||
-				document.querySelector('.acct-toast')
-			expect(toast).not.toBeNull()
-			jest.advanceTimersByTime(2700)
-			jest.useRealTimers()
+			const overlay = document.querySelector(
+				'.acct-modal-overlay'
+			)
+			expect(overlay).not.toBeNull()
+			expect(
+				overlay.querySelector('#acct-name-input').value
+			).toBe('D')
+		})
+		test('delete account opens a confirmation modal', () => {
+			updateAuthNav({ name: 'D', roles: [] })
+			const btn = document.querySelector('.acct-avatar')
+			btn.click()
+			const item = [
+				...document.querySelectorAll('.acct-menu-item'),
+			].find((el) =>
+				el.textContent.includes('Delete account')
+			)
+			expect(item).toBeDefined()
+			expect(item.disabled).toBe(false)
+			item.click()
+			const overlay = document.querySelector(
+				'.acct-modal-overlay'
+			)
+			expect(overlay).not.toBeNull()
+			expect(
+				overlay.querySelector('#acct-delete-confirm')
+			).not.toBeNull()
+		})
+		test('change password opens a modal (PIN form for PIN accounts)', async () => {
+			const originalFetch = global.fetch
+			global.fetch = jest.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ has_pin: true }),
+			})
+			try {
+				updateAuthNav({ name: 'D', roles: [] })
+				const btn =
+					document.querySelector('.acct-avatar')
+				btn.click()
+				const item = [
+					...document.querySelectorAll(
+						'.acct-menu-item'
+					),
+				].find((el) =>
+					el.textContent.includes(
+						'Change password'
+					)
+				)
+				expect(item).toBeDefined()
+				item.click()
+				await new Promise((r) => setTimeout(r, 0))
+				const overlay = document.querySelector(
+					'.acct-modal-overlay'
+				)
+				expect(overlay).not.toBeNull()
+				expect(
+					overlay.querySelector('#acct-cur-pin')
+				).not.toBeNull()
+				expect(
+					overlay.querySelector('#acct-new-pin')
+				).not.toBeNull()
+			} finally {
+				global.fetch = originalFetch
+			}
 		})
 		test('admin without name shows user icon fallback', () => {
 			updateAuthNav({ name: '', roles: ['SUPER_ADMIN'] })

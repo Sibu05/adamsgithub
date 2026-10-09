@@ -126,7 +126,15 @@ app.use((req, res, next) => {
 	next()
 })
 
-const PIN_AUTH_PATHS = ['/login', '/register', '/logout', '/me']
+const PIN_AUTH_PATHS = [
+	'/login',
+	'/register',
+	'/logout',
+	'/me',
+	'/profile',
+	'/change-pin',
+	'/account',
+]
 
 app.use('/api/auth', (req, res, next) => {
 	if (PIN_AUTH_PATHS.includes(req.path)) {

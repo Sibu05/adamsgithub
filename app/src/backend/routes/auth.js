@@ -284,4 +284,175 @@ router.post('/logout', (req, res) => {
 	})
 })
 
+function requireSession(req, res, next) {
+	if (!req.session?.user?.user_id) {
+		return res.status(401).json({ error: 'Not authenticated' })
+	}
+	next()
+}
+
+// PROFILE ROUTE — display name, login handle, and whether this account
+// has a PIN (username + PIN accounts do; Google accounts don't).
+router.get('/profile', requireSession, async (req, res) => {
+	try {
+		const [rows] = await pool.query(
+			'SELECT user_id, name, email, provider_id FROM users WHERE user_id = ?',
+			[req.session.user.user_id]
+		)
+		if (!rows.length) {
+			return res
+				.status(404)
+				.json({ error: 'Account not found' })
+		}
+		const [creds] = await pool.query(
+			'SELECT 1 AS has_pin FROM user_credentials WHERE user_id = ?',
+			[req.session.user.user_id]
+		)
+		const u = rows[0]
+		res.json({
+			user_id: u.user_id,
+			name: u.name,
+			username: u.email,
+			has_pin: creds.length > 0,
+			is_local: String(u.provider_id || '').startsWith(
+				'local:'
+			),
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// EDIT DISPLAY NAME ROUTE — renames what the header avatar and menus
+// show. The login handle (username/email) is identity and stays as-is.
+router.patch('/profile', requireSession, async (req, res) => {
+	const name = String(req.body?.name ?? '').trim()
+	if (!name || name.length > 100) {
+		return res.status(400).json({
+			error: 'Display name must be 1 to 100 characters',
+		})
+	}
+	try {
+		const [result] = await pool.query(
+			'UPDATE users SET name = ? WHERE user_id = ?',
+			[name, req.session.user.user_id]
+		)
+		if (!result.affectedRows) {
+			return res
+				.status(404)
+				.json({ error: 'Account not found' })
+		}
+		req.session.user.name = name
+		req.session.user.username = name
+		res.json({
+			message: 'Display name updated',
+			user: {
+				user_id: req.session.user.user_id,
+				name,
+				email: req.session.user.email,
+			},
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// CHANGE PIN ROUTE — username + PIN accounts only. Google accounts have
+// no PIN row, so they get a clear message instead of a cryptic 401.
+router.post('/change-pin', requireSession, async (req, res) => {
+	const { current_pin, new_pin } = req.body || {}
+	if (!current_pin || !new_pin) {
+		return res.status(400).json({
+			error: 'current_pin and new_pin are required',
+		})
+	}
+	try {
+		const [creds] = await pool.query(
+			'SELECT pin_hash FROM user_credentials WHERE user_id = ?',
+			[req.session.user.user_id]
+		)
+		if (!creds.length) {
+			return res.status(400).json({
+				error: 'This account signs in with Google — there is no PIN to change.',
+			})
+		}
+		const { ok } = await verifyPin(
+			String(current_pin),
+			creds[0]?.pin_hash
+		)
+		if (!ok) {
+			return res
+				.status(401)
+				.json({ error: 'Current PIN is incorrect' })
+		}
+		if (!isValidPin(String(new_pin))) {
+			return res
+				.status(400)
+				.json({ error: 'PIN must be 4 to 6 digits' })
+		}
+		await pool.query(
+			'UPDATE user_credentials SET pin_hash = ? WHERE user_id = ?',
+			[
+				await hashPin(String(new_pin)),
+				req.session.user.user_id,
+			]
+		)
+		res.json({ message: 'PIN updated' })
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// DELETE ACCOUNT ROUTE — removes the login (PIN hash, roles, terms
+// record) and anonymises the users row so game history keeps referential
+// integrity without holding personal data. The player can no longer log
+// in; signing in again with Google starts a brand-new empty account.
+router.delete('/account', requireSession, async (req, res) => {
+	if (req.body?.confirmation !== 'DELETE') {
+		return res.status(400).json({
+			error: 'Type DELETE to confirm account deletion',
+		})
+	}
+	const userId = req.session.user.user_id
+	const conn = await pool.getConnection()
+	try {
+		await conn.beginTransaction()
+		await conn.query(
+			'DELETE FROM user_credentials WHERE user_id = ?',
+			[userId]
+		)
+		await conn.query('DELETE FROM admin_roles WHERE user_id = ?', [
+			userId,
+		])
+		await conn.query(
+			'UPDATE admin_roles SET granted_by = NULL WHERE granted_by = ?',
+			[userId]
+		)
+		await conn.query(
+			'DELETE FROM user_terms_acceptances WHERE user_id = ?',
+			[userId]
+		)
+		const anon = `deleted_${userId}_${Date.now().toString(36)}@deleted.local`
+		await conn.query(
+			'UPDATE users SET name = ?, email = ?, provider_id = ?, avatar_url = NULL, points = 0 WHERE user_id = ?',
+			[
+				'Deleted player',
+				anon,
+				`deleted:${userId}:${Date.now().toString(36)}`,
+				userId,
+			]
+		)
+		await conn.commit()
+	} catch (err) {
+		await conn.rollback()
+		conn.release()
+		return res.status(500).json({ error: err.message })
+	}
+	conn.release()
+	req.session.destroy(() => {
+		res.clearCookie('a2a-session-key')
+		res.json({ message: 'Account deleted' })
+	})
+})
+
 export default router
