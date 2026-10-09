@@ -152,3 +152,42 @@ export async function clearBridgeSession() {
 		credentials: 'include',
 	})
 }
+
+/** Request a PIN-reset token (password-reset requirement). */
+export async function requestPinReset(username) {
+	try {
+		const res = await fetch(`${AUTH_API}/forgot-pin`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email: username }),
+		})
+		const data = await res.json()
+		if (!res.ok)
+			throw new Error(data.error || 'Reset request failed')
+		return { data, error: null }
+	} catch (error) {
+		return { data: null, error }
+	}
+}
+
+/** Consume a PIN-reset token and set a new PIN. */
+export async function confirmPinReset(username, token, newPin) {
+	try {
+		const res = await fetch(`${AUTH_API}/reset-pin`, {
+			method: 'POST',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				email: username,
+				token,
+				new_pin: newPin,
+			}),
+		})
+		const data = await res.json()
+		if (!res.ok) throw new Error(data.error || 'Reset failed')
+		return { data, error: null }
+	} catch (error) {
+		return { data: null, error }
+	}
+}

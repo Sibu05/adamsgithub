@@ -133,6 +133,8 @@ const PIN_AUTH_PATHS = [
 	'/me',
 	'/profile',
 	'/change-pin',
+	'/forgot-pin',
+	'/reset-pin',
 	'/account',
 ]
 
@@ -660,6 +662,30 @@ async function warn_if_better_auth_tables_missing() {
 	}
 }
 
+async function ensure_performance_indexes() {
+	// Milestone 4: geo + attempt lookups. CREATE INDEX is not idempotent
+	// in MySQL, so ignore 1061 (duplicate key name) on existing DBs.
+	// This boot-time pass is the single source of truth; schema.sql only
+	// documents the index list because bare CREATE INDEX is not re-runnable.
+	const indexes = [
+		`CREATE INDEX idx_events_lat_lng ON events (latitude, longitude)`,
+		`CREATE INDEX idx_events_active_window ON events (is_active, starts_at, ends_at)`,
+		`CREATE INDEX idx_ta_user_event ON trivia_attempts (user_id, event_id)`,
+		`CREATE INDEX idx_lcl_user_checked ON location_check_log (user_id, checked_at)`,
+	]
+	for (const sql of indexes) {
+		try {
+			await pool.query(sql)
+		} catch (err) {
+			if (err.code !== 'ER_DUP_KEYNAME' && err.errno !== 1061)
+				console.warn(
+					'[performance indexes]',
+					err.message
+				)
+		}
+	}
+}
+
 async function initialize_database() {
 	// Creates tables if they don't exist yet — safe to run every startup,
 	// since schema.sql uses CREATE TABLE IF NOT EXISTS and doesn't touch data.
@@ -669,6 +695,7 @@ async function initialize_database() {
 	await ensure_placement_schema()
 	await ensure_ranked_schema()
 	await ensure_movement_trust_schema()
+	await ensure_performance_indexes()
 	await warn_if_better_auth_tables_missing()
 }
 

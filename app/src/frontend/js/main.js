@@ -4,6 +4,8 @@ import {
 	googleSignIn,
 	baSignOut,
 	clearBridgeSession,
+	requestPinReset,
+	confirmPinReset,
 } from './auth-client.js'
 import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
@@ -1576,6 +1578,13 @@ function showDrawerStatus(message, isError) {
 	el.className = `auth-status visible ${isError ? 'error' : 'success'}`
 }
 
+function showForgotPinStatus(message, isError) {
+	const el = document.getElementById('forgot-pin-status')
+	if (!el) return
+	el.textContent = message
+	el.className = `auth-status visible ${isError ? 'error' : 'success'}`
+}
+
 window.switchAuthTab = function (tab) {
 	const loginPanel = document.getElementById('login-panel')
 	const signupPanel = document.getElementById('signup-panel')
@@ -1686,6 +1695,87 @@ function setupAuthDrawerHandlers() {
 				showDrawerStatus('Account created!', false)
 				closeAuthDrawer()
 				redirectAfterLogin(data)
+			}
+		})
+	}
+
+	// Forgot PIN: request a reset token (returned in-body in demo mode)
+	const forgotPinForm = document.getElementById('drawer-forgot-pin-form')
+	if (forgotPinForm) {
+		forgotPinForm.addEventListener('submit', async (e) => {
+			e.preventDefault()
+			const username = document
+				.getElementById('drawer-forgot-username')
+				.value.trim()
+			if (!username) {
+				showForgotPinStatus(
+					'Enter your username first.',
+					true
+				)
+				return
+			}
+			showForgotPinStatus('Sending reset token...', false)
+			const { data, error } = await requestPinReset(username)
+			if (error) {
+				showForgotPinStatus(
+					'Reset request failed: ' +
+						error.message,
+					true
+				)
+			} else if (data?.reset_token) {
+				showForgotPinStatus(
+					'Reset token (demo mode — normally emailed): ' +
+						data.reset_token +
+						' — paste it below with a new PIN.',
+					false
+				)
+			} else {
+				showForgotPinStatus(
+					data?.message ||
+						'If that username exists, a reset token was created.',
+					false
+				)
+			}
+		})
+	}
+
+	// Reset PIN: consume the token and set the new PIN
+	const resetPinForm = document.getElementById('drawer-reset-pin-form')
+	if (resetPinForm) {
+		resetPinForm.addEventListener('submit', async (e) => {
+			e.preventDefault()
+			const username = document
+				.getElementById('drawer-forgot-username')
+				.value.trim()
+			const token = document
+				.getElementById('drawer-reset-token')
+				.value.trim()
+			const newPin = document.getElementById(
+				'drawer-reset-new-pin'
+			).value
+			if (!username || !token || !newPin) {
+				showForgotPinStatus(
+					'Enter your username, the reset token and a new PIN.',
+					true
+				)
+				return
+			}
+			showForgotPinStatus('Setting new PIN...', false)
+			const { error } = await confirmPinReset(
+				username,
+				token,
+				newPin
+			)
+			if (error) {
+				showForgotPinStatus(
+					'Reset failed: ' + error.message,
+					true
+				)
+			} else {
+				showForgotPinStatus(
+					'PIN updated — you can log in now.',
+					false
+				)
 			}
 		})
 	}

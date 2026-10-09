@@ -1,4 +1,5 @@
 import express from 'express'
+import crypto from 'crypto'
 import pool from '../utils/db.js'
 import { hashPin, verifyPin, isValidPin } from '../utils/pin_hash.js'
 import { createLoginLimiter } from '../utils/login_limiter.js'
@@ -12,6 +13,13 @@ export const TERMS_VERSION = '1.0'
 
 // Failed username + PIN logins, per ip+username and per ip.
 export const loginLimiter = createLoginLimiter()
+
+// PIN-reset tokens (Milestone 4: password reset requirement).
+// In-memory single-instance store: token -> { user_id, email, expires_at }.
+// 15-minute expiry, single-use. For multi-instance production this would
+// move to a `password_resets` table — documented in authentication.md.
+export const pinResetTokens = new Map()
+export const PIN_RESET_TTL_MS = 15 * 60 * 1000
 
 router.use((req, res, next) => {
 	console.log(
@@ -453,6 +461,95 @@ router.delete('/account', requireSession, async (req, res) => {
 		res.clearCookie('a2a-session-key')
 		res.json({ message: 'Account deleted' })
 	})
+})
+
+// FORGOT-PIN ROUTE — Milestone 4 password-reset requirement.
+// Username + PIN accounts only. Generates a single-use 15-minute token.
+// Always returns 200 with a generic message to avoid user enumeration;
+// includes `reset_token` in the response so the flow is demonstrable
+// without an SMTP server (production would email it instead).
+router.post('/forgot-pin', async (req, res) => {
+	const email = String(req.body?.email ?? '')
+		.trim()
+		.toLowerCase()
+	if (!email) {
+		return res.status(400).json({ error: 'email is required' })
+	}
+	try {
+		const [users] = await pool.query(
+			'SELECT user_id, email FROM users WHERE LOWER(email) = ?',
+			[email]
+		)
+		if (!users.length) {
+			return res.json({
+				message: 'If that username exists, a reset token was created.',
+			})
+		}
+		const [creds] = await pool.query(
+			'SELECT user_id FROM user_credentials WHERE user_id = ?',
+			[users[0].user_id]
+		)
+		if (!creds.length) {
+			return res.status(400).json({
+				error: 'This account signs in with Google — there is no PIN to reset.',
+			})
+		}
+		const token = crypto.randomBytes(32).toString('hex')
+		pinResetTokens.set(token, {
+			user_id: users[0].user_id,
+			email: users[0].email,
+			expires_at: Date.now() + PIN_RESET_TTL_MS,
+		})
+		res.json({
+			message: 'If that username exists, a reset token was created.',
+			reset_token: token,
+			expires_in_s: PIN_RESET_TTL_MS / 1000,
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
+})
+
+// RESET-PIN ROUTE — consumes a forgot-pin token and sets a new PIN.
+router.post('/reset-pin', async (req, res) => {
+	const email = String(req.body?.email ?? '')
+		.trim()
+		.toLowerCase()
+	const { token, new_pin } = req.body || {}
+	if (!email || !token || !new_pin) {
+		return res.status(400).json({
+			error: 'email, token and new_pin are required',
+		})
+	}
+	if (!isValidPin(String(new_pin))) {
+		return res
+			.status(400)
+			.json({ error: 'PIN must be 4 to 6 digits' })
+	}
+	const record = pinResetTokens.get(String(token))
+	if (!record || record.email.toLowerCase() !== email) {
+		return res
+			.status(400)
+			.json({ error: 'Invalid or expired reset token' })
+	}
+	if (Date.now() > record.expires_at) {
+		pinResetTokens.delete(String(token))
+		return res
+			.status(400)
+			.json({ error: 'Invalid or expired reset token' })
+	}
+	try {
+		await pool.query(
+			'UPDATE user_credentials SET pin_hash = ? WHERE user_id = ?',
+			[await hashPin(String(new_pin)), record.user_id]
+		)
+		pinResetTokens.delete(String(token))
+		res.json({
+			message: 'PIN has been reset — you can now log in.',
+		})
+	} catch (err) {
+		res.status(500).json({ error: err.message })
+	}
 })
 
 export default router
