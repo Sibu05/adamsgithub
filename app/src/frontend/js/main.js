@@ -2,7 +2,6 @@ import {
 	usernameSignIn,
 	usernameSignUp,
 	googleSignIn,
-	baSignOut,
 	clearBridgeSession,
 	requestPinReset,
 	confirmPinReset,
@@ -923,6 +922,26 @@ function setupGeoPanel() {
 }
 
 /**
+ * Google sign-in failures come back as ?auth_error=<message> on the page
+ * the backend redirected to. Show the message once and clean the URL.
+ */
+function showAuthErrorFromUrl() {
+	const params = new URLSearchParams(window.location.search)
+	const message = params.get('auth_error')
+	if (!message) return
+	params.delete('auth_error')
+	const qs = params.toString()
+	history.replaceState(
+		null,
+		'',
+		window.location.pathname +
+			(qs ? `?${qs}` : '') +
+			window.location.hash
+	)
+	alert(message)
+}
+
+/**
  * AUTHENTICATION SESSION CHECK
  */
 /**
@@ -943,18 +962,6 @@ async function checkAuthSession() {
 			const user = await res.json()
 			currentUser = user
 			updateAuthNav(user)
-		} else if (res.status === 409) {
-			// Google sign-in refused: the email belongs to a
-			// username + PIN account. Drop the Google session so this
-			// doesn't repeat on every page load, and say why.
-			const { error } = await res.json().catch(() => ({}))
-			await baSignOut()
-			currentUser = null
-			updateAuthNav(null)
-			alert(
-				error ||
-					'Google sign-in was refused for this account.'
-			)
 		} else {
 			// 401 from the backend — no valid session.
 			currentUser = null
@@ -1389,6 +1396,7 @@ async function initializeApp() {
 	// Auth first (fire-and-forget): resolve the header before the map and
 	// GPS finish loading, so the nav never flashes the wrong state while
 	// locating. The map-load handler below re-syncs once pins render.
+	showAuthErrorFromUrl()
 	checkAuthSession().catch(() => {})
 	map = new maplibregl.Map({
 		container: 'map',
