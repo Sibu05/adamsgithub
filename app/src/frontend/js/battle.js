@@ -733,7 +733,13 @@ function connectToWebSocket() {
 							data.state
 						)
 						switchToBattleView()
-						startTurnTimer(Math.round(data.turn_timer_ms / 1000, 2) ?? 30)
+						startTurnTimer(
+							Math.round(
+								data.turn_timer_ms /
+									1000,
+								2
+							) ?? 30
+						)
 						break
 
 					case 'turn_timeout':
@@ -791,7 +797,13 @@ function connectToWebSocket() {
 							user.user_id,
 							data.state
 						)
-						startTurnTimer(Math.round(data.turn_timer_ms / 1000, 2) ?? 30)
+						startTurnTimer(
+							Math.round(
+								data.turn_timer_ms /
+									1000,
+								2
+							) ?? 30
+						)
 						break
 
 					case 'match_results':

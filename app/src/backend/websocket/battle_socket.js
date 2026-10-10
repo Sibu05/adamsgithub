@@ -662,9 +662,12 @@ battleWss.on('connection', (ws, request) => {
 								type: 'state_update',
 								battle_id: old_battle_id,
 								state,
-								turn_timer_ms: get_turn_timer(
-									old_battle_id
-								) - 1 * 1000,
+								turn_timer_ms:
+									get_turn_timer(
+										old_battle_id
+									) -
+									1 *
+										1000,
 							})
 						ws.send(state_payload)
 					} else {

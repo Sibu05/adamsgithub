@@ -251,8 +251,12 @@
 }
 
 @keyframes timeout-pulse {
-	from { opacity: 1; }
-	to { opacity: 0.5; }
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0.5;
+	}
 }
 
 .battle-board {
@@ -789,4 +793,3 @@ body.night .battle-log li.player-log {
 body.night .battle-log li.opponent-log {
 	color: #f07c7c;
 }
-
