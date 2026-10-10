@@ -647,7 +647,7 @@ describe('GET /api/auth/profile', () => {
 						user_id: 4,
 						name: 'G',
 						email: 'g@gmail.com',
-						provider_id: 'betterauth:xyz',
+						provider_id: 'google:xyz',
 					},
 				],
 			])

@@ -1,16 +1,14 @@
 /**
  * Adamas2Aurum — Express Server (dev branch)
  *
- * Integrates Better Auth (from feat/user-story-1-auth) with the existing
- * team infrastructure. A bridge middleware maps Better Auth sessions to
- * express-session so that existing routes (events, trivia) keep working
- * without modification.
+ * Authentication:
+ *   - Google sign-in via OAuth 2.0 (routes/oauth.js). A successful login
+ *     stores the user in express-session, exactly like PIN login does, so
+ *     every route reads req.user / req.session.user the same way.
+ *   - Username + PIN (routes/auth.js) is kept alongside it.
  *
- * All existing functionality preserved:
- *   - event_routes, trivia_routes, auth_routes (PIN-based, kept for compat)
- *   - initialize_database (schema.sql with CREATE TABLE IF NOT EXISTS)
- *   - seed_database (only when SEED_DB=true)
- *   - /api/health endpoint
+ * Also: initialize_database (schema.sql with CREATE TABLE IF NOT EXISTS),
+ * seed_database (only when SEED_DB=true) and the /api/health endpoint.
  */
 
 import express from 'express'
@@ -21,11 +19,11 @@ import { createServer } from 'http'
 
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { toNodeHandler, fromNodeHeaders } from 'better-auth/node'
 
 import event_routes from './routes/events.js'
 import card_routes from './routes/cards.js'
 import auth_routes from './routes/auth.js'
+import { create_oauth_router } from './routes/oauth.js'
 import trivia_routes from './routes/trivia.js'
 import question_routes from './routes/questions.js'
 import pool_routes from './routes/event_pool.js'
@@ -44,15 +42,12 @@ import ranked_routes from './routes/ranked.js'
 import movement_flags_routes from './routes/movement_flags.js'
 
 import pool from './utils/db.js'
-import { auth } from './src/auth.js'
 import { execute_sql_script } from './utils/sql_utils.js'
 import { setup_websocket_router } from './websocket/socket_router.js'
 import { log_buffer } from './utils/logs.js'
 import { startRotationScheduler } from './placement/rotation_job.js'
 import { startSeasonScheduler } from './placement/season_job.js'
 import { ensure_ranked_schema } from './db/ranked_schema.js'
-import { pending_better_auth_migrations } from './db/migrate_better_auth.js'
-import { resolve_better_auth_user } from './utils/better_auth_sync.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -126,31 +121,15 @@ app.use((req, res, next) => {
 	next()
 })
 
-const PIN_AUTH_PATHS = [
-	'/login',
-	'/register',
-	'/logout',
-	'/me',
-	'/profile',
-	'/change-pin',
-	'/forgot-pin',
-	'/reset-pin',
-	'/account',
-]
-
-app.use('/api/auth', (req, res, next) => {
-	if (PIN_AUTH_PATHS.includes(req.path)) {
-		return next() // skip Better Auth → falls through to auth_routes below
-	}
-	toNodeHandler(auth)(req, res, next)
-})
-
+// Google OAuth (/api/auth/google, /api/auth/callback/google) first, then
+// the username + PIN routes. Paths don't overlap.
+app.use('/api/auth', create_oauth_router({ allowed_origins }))
 app.use('/api/auth', auth_routes)
 
 // ── SESSION RESOLUTION MIDDLEWARE ──
-// Populates req.user from EITHER our custom session OR Better Auth's session.
+// Refreshes req.user from the database for whoever is logged in (Google
+// and PIN logins both put the user in req.session.user).
 app.use(async (req, res, next) => {
-	// 1. Custom session (username + PIN)
 	if (req.session?.user?.user_id) {
 		try {
 			const [users] = await pool.query(
@@ -159,54 +138,8 @@ app.use(async (req, res, next) => {
 			)
 			if (users.length) req.user = users[0]
 		} catch (err) {
-			console.warn(
-				'Custom session resolve error:',
-				err.message
-			)
+			console.warn('Session resolve error:', err.message)
 		}
-		return next()
-	}
-
-	// 2. Better Auth session (Google OAuth)
-	try {
-		const bSession = await Promise.race([
-			auth.api.getSession({
-				headers: fromNodeHeaders(req.headers),
-			}),
-			new Promise((_, reject) =>
-				setTimeout(
-					() =>
-						reject(
-							new Error(
-								'Better Auth timeout'
-							)
-						),
-					3000
-				)
-			),
-		])
-		if (bSession?.user) {
-			// Matched by Google account id, not email alone — see
-			// utils/better_auth_sync.js.
-			const resolved = await resolve_better_auth_user(
-				pool,
-				bSession.user
-			)
-			if (resolved.conflict) {
-				req.auth_conflict = resolved.conflict
-			} else {
-				req.user = resolved.user
-				// Keep the express-session cookie in sync so existing code that reads
-				// req.session.user.user_id continues to work for Google-OAuth users.
-				req.session.user = req.user
-			}
-		}
-	} catch (err) {
-		// Silently continue for unauthenticated requests
-		console.warn(
-			'Better Auth session resolution skipped/failed:',
-			err.message
-		)
 	}
 	next()
 })
@@ -255,10 +188,6 @@ app.get('/api/health', async (req, res) => {
 // Get current authenticated user (used by frontend checkAuthSession)
 // ---------------------------------------------------------------------------
 app.get('/api/me', async (req, res) => {
-	if (!req.user?.user_id && req.auth_conflict) {
-		// Google sign-in refused (email belongs to a PIN account).
-		return res.status(409).json({ error: req.auth_conflict })
-	}
 	if (!req.user?.user_id) {
 		return res.status(401).json({ error: 'Not authenticated' })
 	}
@@ -641,27 +570,6 @@ async function ensure_movement_trust_schema() {
 	}
 }
 
-async function warn_if_better_auth_tables_missing() {
-	// Read-only check. Better Auth doesn't create its own tables, and
-	// running its migration automatically here would also touch whatever
-	// shared/deployed DB this server points at — so it's an explicit step:
-	// `npm run db:migrate-auth`.
-	try {
-		const { tables, columns } =
-			await pending_better_auth_migrations(auth.options)
-		if (tables.length || columns.length) {
-			console.warn(
-				`[better-auth] Missing ${[...tables, ...columns].join(', ')} — Google and email sign-in will fail until you run: npm run db:migrate-auth`
-			)
-		}
-	} catch (err) {
-		console.warn(
-			'[better-auth] Could not check Better Auth tables:',
-			err.message
-		)
-	}
-}
-
 async function ensure_performance_indexes() {
 	// Milestone 4: geo + attempt lookups. CREATE INDEX is not idempotent
 	// in MySQL, so ignore 1061 (duplicate key name) on existing DBs.
@@ -696,7 +604,6 @@ async function initialize_database() {
 	await ensure_ranked_schema()
 	await ensure_movement_trust_schema()
 	await ensure_performance_indexes()
-	await warn_if_better_auth_tables_missing()
 }
 
 async function seed_database() {
@@ -709,10 +616,6 @@ async function seed_database() {
 	//
 	// Run explicitly instead: `npm run db:seed`
 	await execute_sql_script(pool, './db/seed.sql')
-}
-
-async function clear_database() {
-	await execute_sql_script(pool, './db/clear_db.sql')
 }
 
 async function view_database() {
@@ -729,9 +632,6 @@ async function view_database() {
 try {
 	await initialize_database()
 
-	if (process.env.CLEAR_DB === 'true') {
-		await clear_database()
-	}
 	if (process.env.SEED_DB === 'true') {
 		await seed_database()
 	}

@@ -33,9 +33,6 @@ export function isModerator(user) {
  * Admins/authors go to the console; everyone else goes to the player
  * dashboard (events list).
  */
-// Players land on the main map ('/', index.html) — the same page Google
-// sign-in returns to (its callbackURL is the page the drawer was opened
-// on), so both login paths end up in one place.
 export function redirectAfterLogin(user) {
 	if (isAdmin(user)) {
 		window.location.href = '/pages/console.html'
@@ -89,18 +86,12 @@ export function updateAuthNav(user) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Circular profile avatar + dropdown. One shared component for player pages
-// and the admin console (admin header shows role instead of points).
-// ---------------------------------------------------------------------------
-
 function initialsFor(name) {
 	if (!name || !name.trim()) return ''
 	const parts = name.trim().split(/\s+/)
 	return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase()
 }
 
-// Avatar face: initials when we have a name, person icon otherwise.
 function renderAvatarFace(el, name) {
 	const initials = initialsFor(name)
 	if (initials) {
@@ -130,16 +121,10 @@ function notify(msg) {
 
 export async function logout() {
 	try {
-		await Promise.allSettled([
-			fetch(`${API_BASE}/api/auth/logout`, {
-				method: 'POST',
-				credentials: 'include',
-			}),
-			fetch(`${API_BASE}/api/auth/sign-out`, {
-				method: 'POST',
-				credentials: 'include',
-			}),
-		])
+		await fetch(`${API_BASE}/api/auth/logout`, {
+			method: 'POST',
+			credentials: 'include',
+		})
 	} catch (err) {
 		console.warn('Logout error:', err)
 	} finally {
@@ -347,12 +332,6 @@ function ensureAccountMenu(user) {
 	wrap.appendChild(btn)
 	anchor.prepend(wrap)
 }
-
-// ---------------------------------------------------------------------------
-// Account modals: edit display name, change PIN, delete account.
-// Small self-contained dialogs (no extra dependencies); all requests carry
-// the session cookie so the backend knows which player is acting.
-// ---------------------------------------------------------------------------
 
 function openAcctModal(title, bodyHTML) {
 	document.querySelector('.acct-modal-overlay')?.remove()

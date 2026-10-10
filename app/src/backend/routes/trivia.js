@@ -7,9 +7,9 @@ import { analyzeMovement } from '../services/movementTrust.js'
 const router = express.Router()
 
 // Blocks access to a route unless the player has an active login session.
-// req.session.user is populated either by the PIN-based /auth/login route,
-// or by the Better Auth bridge middleware in server.js — both end up
-// setting the same { user_id, name, email } shape, so this check works
+// req.session.user is populated either by the PIN-based /auth/login route
+// or by the Google OAuth callback (routes/oauth.js) — both end up
+// setting the same { user_id, name, ... } shape, so this check works
 // the same regardless of which auth method the player used.
 function requireAuth(req, res, next) {
 	const userId = req.session?.user?.user_id || req.user?.user_id

@@ -61,7 +61,7 @@ describe('auth-helpers', () => {
 			global.fetch = originalFetch
 		})
 
-		test('clears both express session and better-auth session, then redirects to /', async () => {
+		test('clears the session on the backend, then redirects to /', async () => {
 			const fetchMock = jest
 				.fn()
 				.mockResolvedValue({ ok: true })
@@ -69,15 +69,9 @@ describe('auth-helpers', () => {
 
 			await logout()
 
-			expect(fetchMock).toHaveBeenCalledTimes(2)
-			const calledUrls = fetchMock.mock.calls.map(
-				(call) => call[0]
-			)
-			expect(calledUrls).toContain(
+			expect(fetchMock).toHaveBeenCalledTimes(1)
+			expect(fetchMock.mock.calls[0][0]).toBe(
 				`${API_BASE}/api/auth/logout`
-			)
-			expect(calledUrls).toContain(
-				`${API_BASE}/api/auth/sign-out`
 			)
 			expect(window.location.href).toBe('/')
 		})
