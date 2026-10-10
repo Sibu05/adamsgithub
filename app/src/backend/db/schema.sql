@@ -7,13 +7,15 @@ CREATE TABLE IF NOT EXISTS users (
     name          VARCHAR(100)   NOT NULL,
     avatar_url    VARCHAR(500),
     points        INT            NOT NULL DEFAULT 0,
+    moderation_status ENUM('NONE','WARNED','RESTRICTED','SUSPENDED') NOT NULL DEFAULT 'NONE',
+    moderation_expires_at DATETIME NULL,
     created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS user_credentials (
     user_id   INT         NOT NULL PRIMARY KEY,
-    pin_hash  VARCHAR(64) NOT NULL,
+    pin_hash  VARCHAR(255) NOT NULL,
     CONSTRAINT fk_ucred_user FOREIGN KEY (user_id) REFERENCES users (user_id)
 );
 -- ============================================================
@@ -323,6 +325,7 @@ CREATE TABLE IF NOT EXISTS point_transactions (
                    'REROLL_PURCHASE',
                    'CARD_SOLD',
                    'SEASON_BONUS',
+                   'ZONE_BONUS',
                    'OTHER'
                  ) NOT NULL,
     reference_id INT,
@@ -380,29 +383,12 @@ CREATE TABLE IF NOT EXISTS leaderboard_entries (
 -- ============================================================
 --  18. QUESTIONS  (User Story 6 — content-author question authoring)
 --
---  Stores trivia questions attached to an event in three formats:
---  MULTIPLE_CHOICE, TRUE_FALSE, FILL_BLANK.
---    - correct_answer holds the right answer (the correct option's
---      value for MULTIPLE_CHOICE, "true"/"false" for TRUE_FALSE,
---      and the expected answer text for FILL_BLANK).
---    - options is a JSON array of strings, used ONLY for
---      MULTIPLE_CHOICE (NULL for the other formats).
---  Deleting an event cascades to its questions (ON DELETE CASCADE),
---  which is the SQL equivalent of the Event -> questions relation.
+--  Authored questions live in trivia_questions + trivia_options
+--  (see routes/questions.js). FILL_BLANK stores its accepted answer as
+--  an is_correct option. An older, never-used `questions` table was
+--  defined here — it is no longer created, but existing databases
+--  keep theirs (nothing reads or writes it).
 -- ============================================================
-CREATE TABLE IF NOT EXISTS questions (
-    id             INT           AUTO_INCREMENT PRIMARY KEY,
-    event_id       INT           NOT NULL,
-    type           ENUM('MULTIPLE_CHOICE','TRUE_FALSE','FILL_BLANK') NOT NULL,
-    text           TEXT          NOT NULL,
-    correct_answer VARCHAR(500)  NOT NULL,
-    options        JSON          DEFAULT NULL,
-    created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-    CONSTRAINT fk_us6_question_event FOREIGN KEY (event_id)
-        REFERENCES events (event_id) ON DELETE CASCADE
-);
 
 -- ============================================================
 --  QR FALLBACK TOKENS  (low-accuracy GPS fallback)
@@ -416,6 +402,12 @@ CREATE TABLE IF NOT EXISTS event_qr_tokens (
 
     CONSTRAINT fk_qrt_event FOREIGN KEY (event_id) REFERENCES events (event_id) ON DELETE CASCADE
 );
+
+-- PINs are hashed with scrypt ("scrypt$N$r$p$salt$hash", ~115 chars).
+-- Widens pin_hash on databases created when it held a 64-char SHA-256.
+-- Idempotent, and legacy SHA-256 hashes still fit.
+ALTER TABLE user_credentials
+    MODIFY COLUMN pin_hash VARCHAR(255) NOT NULL;
 
 -- Add FALLBACK_QR to location_check_log status ENUM
 ALTER TABLE location_check_log
@@ -473,5 +465,154 @@ CREATE TABLE IF NOT EXISTS campaigns (
     updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_campaign_author FOREIGN KEY (created_by) REFERENCES users (user_id)
 );
+
+-- ============================================================
+--  20. USER TRUST SCORES  (User Story 5 — mocked trust-score table)
+--
+--  Mocked per-user trust scores that front the moderation queue.
+--  The console's moderation view reads this table sorted by
+--  trust_score (lowest first) and shows the evidence array.
+--  This is a stub so the moderation UI can be built before the
+--  real detection pipeline (User Story 4) lands — swap the read
+--  layer (services/trust_score.js → real scorer) once ready — no
+--  schema change needed.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_trust_scores (
+    user_id     INT             NOT NULL PRIMARY KEY,
+    trust_score DECIMAL(5, 2)   NOT NULL,
+    evidence    JSON,
+    reason      TEXT,
+    updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_uts_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    CONSTRAINT chk_uts_score CHECK (trust_score BETWEEN 0 AND 100)
+);
+
+-- ============================================================
+--  21. MODERATION ACTIONS  (User Story 5 — graduated response)
+--
+--  Graduated tiers: WARNING → RESTRICTION → SUSPENSION, not a
+--  binary ban/no-ban. Stores who moderated whom, with evidence
+--  and optional expiry. The users table carries the active
+--  moderation_status for quick enforcement checks.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS moderation_actions (
+    action_id       INT         AUTO_INCREMENT PRIMARY KEY,
+    target_user_id  INT         NOT NULL,
+    moderator_id    INT         NOT NULL,
+    action_type     ENUM('WARNING','RESTRICTION','SUSPENSION') NOT NULL,
+    reason          TEXT,
+    evidence        JSON,
+    duration_days   INT,
+    expires_at      DATETIME,
+    created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_ma_target FOREIGN KEY (target_user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    CONSTRAINT fk_ma_mod    FOREIGN KEY (moderator_id)   REFERENCES users (user_id)
+);
+
+-- ============================================================
+--  ZONE OWNERS  (Sprint 3 — Story 8: territory control)
+--
+--  One row per event that currently has an owner. "Owner" is
+--  whoever has accumulated the highest recent points score from
+--  that event's trivia challenges, subject to a defence bonus
+--  for the incumbent.
+--
+--  The score column caches the owner's score at the moment they
+--  took ownership. It is used to apply the incumbent defence
+--  multiplier when a challenger tries to overtake them.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS zone_owners (
+    event_id    INT      NOT NULL PRIMARY KEY,
+    owner_id    INT      NOT NULL,
+    score       INT      NOT NULL DEFAULT 0,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_zone_event FOREIGN KEY (event_id) REFERENCES events (event_id) ON DELETE CASCADE,
+    CONSTRAINT fk_zone_owner FOREIGN KEY (owner_id) REFERENCES users  (user_id)
+);
+
+-- Add ZONE_BONUS to point_transactions reason enum for databases
+-- created before Sprint 3 Story 8. Idempotent — MySQL accepts the
+-- same enum definition every startup.
+ALTER TABLE point_transactions
+    MODIFY COLUMN reason ENUM(
+                   'TRIVIA_WIN',
+                   'COSMETIC_PURCHASE',
+                   'HINT_PURCHASE',
+                   'INTEL_PURCHASE',
+                   'REROLL_PURCHASE',
+                   'CARD_SOLD',
+                   'SEASON_BONUS',
+                   'ZONE_BONUS',
+                   'OTHER'
+                 ) NOT NULL;
+
+-- ============================================================
+--  PLACEMENT RUNS  (Sprint 3 — procedural event placement)
+--
+--  One row per rotation job run (see placement/rotation_job.js).
+--  Purely observability — nothing reads this back at runtime — so
+--  a run can be inspected after the fact even if it errored out.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS placement_runs (
+    run_id         INT      AUTO_INCREMENT PRIMARY KEY,
+    started_at     DATETIME NOT NULL,
+    finished_at    DATETIME,
+    retired_count  INT      NOT NULL DEFAULT 0,
+    created_count  INT      NOT NULL DEFAULT 0,
+    status         ENUM('SUCCESS','FAILED','SKIPPED') NOT NULL,
+    error          TEXT
+);
+
+-- ============================================================
+--  FEEDBACK REPORTS  (Help & feedback — player issue reports)
+--
+--  Logged-in players file issues from the Help drawer on the main
+--  map. Admins triage them in the console Feedback tab:
+--  NEW → ACKNOWLEDGED → RESOLVED.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS feedback_reports (
+    report_id    INT         AUTO_INCREMENT PRIMARY KEY,
+    user_id      INT         NOT NULL,
+    category     ENUM('BUG','ACCOUNT','LOCATION','CONTENT','OTHER') NOT NULL DEFAULT 'OTHER',
+    title        VARCHAR(200) NOT NULL,
+    body         TEXT        NOT NULL,
+    status       ENUM('NEW','ACKNOWLEDGED','RESOLVED') NOT NULL DEFAULT 'NEW',
+    admin_note   TEXT,
+    created_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_fb_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+);
+
+-- ============================================================
+--  TERMS ACCEPTANCES  (Terms of Use + Privacy Policy consent)
+--
+--  One row per user recording which terms version they accepted
+--  and when. PIN registration requires acceptance up front;
+--  Google sign-ins accept post-login. Bumped versions re-prompt.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_terms_acceptances (
+    user_id       INT         NOT NULL PRIMARY KEY,
+    terms_version VARCHAR(20) NOT NULL,
+    accepted_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_uta_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+);
+
+-- ============================================================
+--  PERFORMANCE INDEXES  (Milestone 4: geo + attempt lookups)
+--
+--  Created idempotently at boot by ensure_performance_indexes()
+--  in server.js (ignores ER_DUP_KEYNAME 1061 on existing DBs):
+--  idx_events_lat_lng (latitude, longitude),
+--  idx_events_active_window (is_active, starts_at, ends_at),
+--  idx_ta_user_event (user_id, event_id),
+--  idx_lcl_user_checked (user_id, checked_at).
+--  Kept out of schema.sql because bare CREATE INDEX is not
+--  re-runnable and would abort execute_sql_script on every boot.
+-- ============================================================
 
 SET FOREIGN_KEY_CHECKS = 1;

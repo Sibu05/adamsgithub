@@ -1,0 +1,120 @@
+/* Procedural Placement tab (console) */
+
+/* Map + side panel. minmax(0, …) lets both tracks shrink below their
+   content; with plain 1fr/340px, long nowrap rows (e.g. a
+   JOHANNESBURG_PLANETARIUM zone pill) widened the side column past the
+   page, so the whole page scrolled sideways and the header looked cut
+   off. */
+.placement-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+	gap: 1.5rem;
+	align-items: start;
+}
+.placement-side {
+	display: grid;
+	gap: 1rem;
+	min-width: 0;
+}
+.placement-side > .form-card {
+	min-width: 0;
+	padding: 1.25rem 1.5rem;
+}
+@media (max-width: 900px) {
+	.placement-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.placement-config-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.2rem 0;
+	color: var(--text-muted);
+}
+.placement-config-row strong {
+	color: var(--text);
+	font-weight: 700;
+}
+
+.placement-event-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid var(--border);
+	font-size: 0.82rem;
+}
+.placement-event-row:last-child {
+	border-bottom: none;
+}
+.placement-event-row .placement-event-title {
+	flex: 1;
+	min-width: 0;
+	color: var(--text);
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.placement-event-row .meta-pill {
+	max-width: 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex-shrink: 1;
+}
+.placement-event-row .placement-event-time {
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* MapLibre positions the marker ROOT element itself (transform is
+   overwritten on every map move), so the fade/drop animation lives on a
+   child element instead — see placement-console.js's renderEventMarkers. */
+.placement-marker-dot {
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--accent, #2f9df0);
+	border: 2px solid #fff;
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.2);
+	transition:
+		opacity 280ms ease,
+		transform 280ms ease;
+	opacity: 1;
+	transform: translateY(0) scale(1);
+}
+.placement-marker-dot.placement-marker-enter {
+	opacity: 0;
+	transform: translateY(-10px) scale(0.5);
+}
+.placement-marker-dot.placement-marker-leave {
+	opacity: 0 !important;
+	transform: translateY(8px) scale(0.5) !important;
+}
+
+#placement-map .maplibregl-ctrl-attrib {
+	font-size: 0.65rem;
+}
+
+/* Not enough Wits-campus questions for pop-ups (see /status questionPool). */
+.placement-warning {
+	margin: 0.75rem 0 0;
+	padding: 0.6rem 0.75rem;
+	border-radius: var(--radius, 8px);
+	border: 1px solid #f5c26b;
+	border-left: 4px solid #f59e0b;
+	background: #fff8e6;
+	color: #7a4b00;
+	font-size: 0.8rem;
+	line-height: 1.4;
+}
+.placement-run-error {
+	display: block;
+	font-size: 0.72rem;
+	color: var(--text-muted);
+	white-space: normal;
+}

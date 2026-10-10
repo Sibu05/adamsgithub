@@ -15,6 +15,7 @@
 		<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
 		<link rel="stylesheet" href="../css/style.css" />
 		<link rel="stylesheet" href="../css/account-menu.css" />
+		<link rel="stylesheet" href="../css/event-panel.css" />
 
 		<style>
 			html,
@@ -149,102 +150,64 @@
 				filter: brightness(0.65);
 			}
 
-			/* Night chrome (same instant swap as the map): sidebar
-			 * header keeps white text legible on a deep-blue tone. */
-			body.night .sidebar-header {
-				background: #0a2a45;
-				box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-			}
-			body.night .popup-challenge-btn {
-				background: #2f9df0;
-			}
-			body.night .popup-challenge-btn:hover {
-				background: #7cc4ff;
-			}
 			@media (prefers-reduced-motion: reduce) {
 				.cloud {
 					animation: none !important;
 				}
 			}
 
-			/* ── Sidebar ─────────────────────────────────────── */
-			.map-sidebar {
-				position: absolute;
-				top: 1rem;
-				left: 1rem;
-				width: 270px;
-				max-height: calc(100% - 2rem);
-				overflow-y: auto;
-				z-index: 1000;
-				display: flex;
-				flex-direction: column;
-				gap: 0.5rem;
-				pointer-events: none; /* let map clicks through */
-			}
-
-			.map-sidebar > * {
-				pointer-events: auto;
-			}
-
-			.sidebar-header {
-				background: var(--accent);
-				color: #fff;
-				border-radius: var(--radius);
-				padding: 0.65rem 0.9rem;
-				font-size: 0.78rem;
-				font-weight: 700;
-				letter-spacing: 0.08em;
-				text-transform: uppercase;
-				box-shadow: 0 2px 8px rgba(12, 36, 97, 0.25);
-				display: flex;
-				align-items: center;
-				gap: 0.45rem;
-			}
-			.sidebar-header .nav-ico,
 			.btn-recenter .nav-ico {
 				width: 1rem;
 				height: 1rem;
 				display: inline-flex;
 				flex-shrink: 0;
 			}
-			.sidebar-header .nav-ico svg,
 			.btn-recenter .nav-ico svg {
 				width: 100%;
 				height: 100%;
 			}
 
-			.sidebar-event {
-				background: var(--surface);
-				border: 1px solid var(--border);
+			/* ── Next-up banner (first undone event) ─────────── */
+			.sidebar-next {
+				background: linear-gradient(
+					135deg,
+					var(--accent),
+					var(--accent-light)
+				);
+				color: #fff;
 				border-radius: var(--radius);
 				padding: 0.75rem 0.9rem;
 				cursor: pointer;
-				transition:
-					border-color var(--transition),
-					box-shadow var(--transition);
-				box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+				box-shadow: 0 2px 8px rgba(12, 36, 97, 0.3);
+				transition: box-shadow var(--transition);
 			}
-
-			.sidebar-event:hover {
-				border-color: var(--accent);
-				box-shadow: 0 2px 8px var(--accent-glow);
+			.sidebar-next:hover {
+				box-shadow: 0 4px 14px rgba(12, 36, 97, 0.45);
 			}
-			.sidebar-event.active {
-				border-color: var(--accent);
-				background: var(--accent-glow);
+			.sidebar-next.done {
+				background: linear-gradient(
+					135deg,
+					#15803d,
+					#22c55e
+				);
+				cursor: default;
 			}
-
-			.sidebar-event-title {
+			.sidebar-next-title {
 				font-size: 0.875rem;
-				font-weight: 600;
-				color: var(--text);
-				margin-bottom: 0.3rem;
+				font-weight: 700;
+				margin-bottom: 0.2rem;
 			}
-
-			.sidebar-event-meta {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 0.3rem;
+			.sidebar-next-sub {
+				font-size: 0.75rem;
+				opacity: 0.9;
+			}
+			.sidebar-next-progress {
+				margin-top: 0.35rem;
+				font-size: 0.72rem;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				opacity: 0.85;
 			}
 
 			/* ── Pokéstop markers (same as main map) ─────────────── */
@@ -454,64 +417,6 @@
 				height: 9px;
 			}
 
-			/* ── Popup ───────────────────────────────────────── */
-			.maplibregl-popup-content {
-				border-radius: var(--radius) !important;
-				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
-				border: 1px solid var(--border) !important;
-				padding: 14px 16px !important;
-				min-width: 220px;
-			}
-
-			.popup-title {
-				font-family: var(--font-display);
-				font-size: 0.95rem;
-				font-weight: 700;
-				color: var(--text);
-				margin-bottom: 0.35rem;
-			}
-
-			.popup-desc {
-				font-size: 0.82rem;
-				color: var(--text-dim);
-				margin-bottom: 0.6rem;
-				line-height: 1.4;
-			}
-
-			.popup-meta {
-				display: flex;
-				flex-wrap: wrap;
-				gap: 0.3rem;
-				margin-bottom: 0.5rem;
-			}
-
-			.popup-challenge-btn {
-				display: block;
-				width: 100%;
-				background: var(--accent);
-				color: #fff;
-				border: none;
-				border-radius: var(--radius);
-				padding: 0.5rem 0.75rem;
-				font-size: 0.82rem;
-				font-weight: 600;
-				cursor: pointer;
-				margin-top: 0.5rem;
-				font-family: var(--font-body);
-				transition: background var(--transition);
-			}
-
-			.popup-challenge-btn:hover {
-				background: var(--accent-light);
-			}
-
-			.popup-out-of-range {
-				font-size: 0.78rem;
-				color: var(--text-muted);
-				margin-top: 0.4rem;
-				text-align: center;
-			}
-
 			/* ── Loading overlay ─────────────────────────────── */
 			.map-overlay {
 				position: absolute;
@@ -582,6 +487,22 @@
 				height: 100%;
 			}
 
+			/* ── Skip link (keyboard a11y) ────────────────────── */
+			.skip-link {
+				position: absolute;
+				left: -9999px;
+				top: 0;
+				background: #fbbf24;
+				color: #111827;
+				padding: 0.6rem 1rem;
+				z-index: 3000;
+				font-weight: 700;
+				border-radius: 0 0 0.5rem 0;
+			}
+			.skip-link:focus {
+				left: 0;
+			}
+
 			/* ── Recenter button ─────────────────────────────── */
 			.btn-recenter {
 				position: absolute;
@@ -608,6 +529,7 @@
 		</style>
 	</head>
 	<body>
+		<a href="#events-main" class="skip-link">Skip to events map</a>
 		<header class="site-header">
 			<div class="header-inner">
 				<a class="logo" href="../index.html">
@@ -737,6 +659,33 @@
 						Battle
 					</a>
 					<a
+						href="spectate.html"
+						class="nav-link hidden"
+						id="nav-spectate"
+					>
+						<span class="nav-ico">
+							<svg
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								aria-hidden="true"
+							>
+								<path
+									d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"
+								/>
+								<circle
+									cx="12"
+									cy="12"
+									r="3"
+								/>
+							</svg>
+						</span>
+						Watch
+					</a>
+					<a
 						href="leaderboard.html"
 						class="nav-link hidden"
 						id="nav-leaderboard"
@@ -783,6 +732,14 @@
 				</nav>
 
 				<div class="header-right">
+					<button
+						id="btn-help"
+						class="btn btn-sm btn-header"
+						title="Help for this page"
+						aria-label="Help"
+					>
+						?
+					</button>
 					<span
 						id="user-badge"
 						class="admin-badge hidden"
@@ -834,7 +791,11 @@
 			</div>
 		</header>
 
-		<div class="map-wrap">
+		<main
+			class="map-wrap"
+			id="events-main"
+			aria-label="Campus events map"
+		>
 			<div id="map">
 				<div class="map-fog" aria-hidden="true"></div>
 				<div class="pogo-clouds" aria-hidden="true">
@@ -875,6 +836,7 @@
 				class="btn-recenter"
 				id="btn-recenter"
 				title="Centre on my location"
+				aria-label="Centre map on my location"
 			>
 				<span class="nav-ico">
 					<svg
@@ -898,8 +860,45 @@
 				Loading events…
 			</div>
 			<div id="map-error" class="map-overlay hidden"></div>
-		</div>
+		</main>
 
 		<script type="module" src="../js/events.js"></script>
+		<script type="module">
+			import {
+				attachHelpButton,
+				currentPageKey,
+			} from '../js/help-modal.js'
+			import {
+				announceEvent,
+				speak,
+			} from '../js/voice-guide.js'
+			import { eventState } from '../js/event-status.js'
+
+			// Help button — content chosen from the current URL.
+			attachHelpButton('btn-help', currentPageKey())
+
+			// Voice guide: single delegated handler so the speaker
+			// button works no matter how many times the popup is
+			// rebuilt.
+			document.addEventListener('click', (e) => {
+				const btn = e.target.closest('.popup-speak-btn')
+				if (!btn) return
+				e.stopPropagation()
+				const eventId = Number(btn.dataset.eventId)
+				if (!eventId) return
+
+				const ev = window.__a2a_get_event?.(eventId)
+				if (!ev) {
+					speak(
+						'Sorry, I could not find that event.'
+					)
+					return
+				}
+				const player =
+					window.__a2a_get_player_lnglat?.()
+				const state = eventState(ev, player)
+				announceEvent(ev, state)
+			})
+		</script>
 	</body>
 </html>

@@ -73,3 +73,7 @@ export function get_battle_state(battle_id) {
 export function clear_battle_state(battle_id) {
 	battle_states.delete(battle_id)
 }
+
+export function list_battle_states() {
+	return [...battle_states.values()]
+}

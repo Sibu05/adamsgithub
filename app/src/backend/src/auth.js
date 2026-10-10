@@ -15,6 +15,13 @@ function buildSocialProviders() {
 export const auth = betterAuth({
 	database: pool,
 	baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
+	// Cross-origin frontend(s), e.g. the Cloudflare deployment.
+	// Set TRUSTED_ORIGINS=https://website.adamas2aurum.workers.dev
+	// on Render so sign-in fetches from another origin are accepted.
+	trustedOrigins: (process.env.TRUSTED_ORIGINS || '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean),
 	secret: process.env.BETTER_AUTH_SECRET,
 	appName: 'Adamas2Aurum',
 	socialProviders: buildSocialProviders(),

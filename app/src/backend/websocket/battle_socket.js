@@ -4,6 +4,7 @@ import {
 	TURN_TIMEOUT_MS,
 	BATTLE_DECK_NO_CARDS,
 	valid_user_cards,
+	deck_violation,
 	get_active_battle,
 } from '../utils/battle.js'
 import {
@@ -21,6 +22,8 @@ import {
 	tick_effects,
 	TEAM_ACTIONS,
 } from './battle_effects.js'
+import { broadcast_to_spectators, clear_spectators } from './spectate_socket.js'
+import { applyRatingUpdate } from '../services/rating.js'
 
 /* A mapping from players user_id to the timeout interval */
 const disconnected_players = new Map()
@@ -104,6 +107,7 @@ async function update_battle_players(battle_id, payload) {
 
 	if (p1 && p1.ws.readyState === 1) p1.ws.send(payload)
 	if (p2 && p2.ws.readyState === 1) p2.ws.send(payload)
+	broadcast_to_spectators(battle_id, payload)
 }
 
 /* battle_id = null: connected to battle site and active in lobby
@@ -136,7 +140,12 @@ function broadcast_lobby_presence() {
 	}
 }
 
-async function set_battle_finished(battle_id, reason, winner = null) {
+async function set_battle_finished(
+	battle_id,
+	reason,
+	winner = null,
+	loser = null
+) {
 	if (battle_id === null) return
 	if (
 		![
@@ -153,6 +162,17 @@ async function set_battle_finished(battle_id, reason, winner = null) {
 		`UPDATE battles SET status = '${reason}', winner_id = ?, ended_at = NOW() WHERE battle_id = ?`,
 		[winner, battle_id]
 	)
+
+	// Ranked rating update. Only fires when both a winner and a human
+	// loser are known — NPC battles pass loser=null and are skipped
+	// naturally, same as the disconnect/abandon path below.
+	if (winner !== null && loser !== null) {
+		try {
+			await applyRatingUpdate(pool, winner, loser)
+		} catch (err) {
+			console.error('rating update failed:', err)
+		}
+	}
 }
 
 // 1. Create a PvP or NPC Battle row in MySQL
@@ -205,9 +225,9 @@ export async function save_player_deck(battle_id, user, deck) {
 		)
 	}
 
-	const is_valid = await valid_user_cards(user, deck)
-	if (!is_valid) {
-		throw new Error('Invalid card selection')
+	const violation = await deck_violation(user, deck)
+	if (violation) {
+		throw new Error(`Invalid card selection: ${violation}`)
 	}
 
 	const values = []
@@ -905,7 +925,8 @@ battleWss.on('connection', (ws, request) => {
 				await set_battle_finished(
 					battle_id,
 					'FORFEITED',
-					winner
+					winner,
+					user_id
 				)
 				await persist_final_health(state)
 
@@ -920,6 +941,7 @@ battleWss.on('connection', (ws, request) => {
 				clear_player_connection(state.player1_id)
 				clear_player_connection(state.player2_id)
 				clear_battle_state(battle_id)
+				clear_spectators(battle_id)
 
 				broadcast_lobby_presence()
 			} else if (msg.type === 'attack') {
@@ -1111,10 +1133,15 @@ battleWss.on('connection', (ws, request) => {
 
 				if (winner !== -1) {
 					clear_turn_timer(battle_id)
+					const loser =
+						winner === state.player1_id
+							? state.player2_id
+							: state.player1_id
 					await set_battle_finished(
 						battle_id,
 						'COMPLETED',
-						winner
+						winner,
+						loser
 					)
 					await persist_final_health(state)
 
@@ -1134,6 +1161,7 @@ battleWss.on('connection', (ws, request) => {
 						state.player2_id
 					)
 					clear_battle_state(battle_id)
+					clear_spectators(battle_id)
 					broadcast_lobby_presence()
 				} else {
 					start_turn_timer(battle_id)
@@ -1221,6 +1249,7 @@ battleWss.on('connection', (ws, request) => {
 				await persist_final_health(state)
 				clear_turn_timer(battle_id)
 				clear_battle_state(player.battle_id)
+				clear_spectators(player.battle_id)
 			}, 120000) // 2 minutes
 			disconnected_players.set(player.user_id, timeout_id)
 		}

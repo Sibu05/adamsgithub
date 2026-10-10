@@ -4,11 +4,17 @@ import {
 	googleSignIn,
 	baSignOut,
 	clearBridgeSession,
+	requestPinReset,
+	confirmPinReset,
 } from './auth-client.js'
 import { API_BASE } from './constants.js'
 import { get_player_location } from './geolocation.js'
+import { get_player_location_with_timeout } from './geolocation.js'
 import { suggestEventOrder } from './graph.js'
 import { redirectAfterLogin, updateAuthNav, logout } from './auth-helpers.js'
+import { initFeedback } from './feedback.js'
+import { initTermsGate, ensureTermsAccepted } from './terms.js'
+import { eventState, eventPopupHTML, metaPillsHTML } from './event-status.js'
 import {
 	createCampusStyle,
 	CAMPUS_CAMERA,
@@ -105,6 +111,12 @@ function isEventCompleted(eventId) {
 	return completedEventIds.has(String(eventId))
 }
 
+// Union of server truth (`completed` flag on GET /api/events for
+// logged-in players) and local wins — same rule as the events page.
+function isDoneEvent(dbEvent) {
+	return dbEvent.completed === true || isEventCompleted(dbEvent.event_id)
+}
+
 function markEventCompleted(eventId) {
 	completedEventIds.add(String(eventId))
 	try {
@@ -141,6 +153,23 @@ function applyNextSuggestedMarker() {
 	}
 }
 
+// Drop a finished stop immediately (no waiting for the 30s poll):
+// remove its pin, re-halo the next one, rebuild the radius discs.
+function removeStopPin(eventId) {
+	const i = stopMarkers.findIndex((s) => String(s.id) === String(eventId))
+	if (i < 0) return
+	stopMarkers[i].marker.remove()
+	stopMarkers.splice(i, 1)
+	applyNextSuggestedMarker()
+	renderProximityCircles(
+		stopMarkers.map((s) => ({
+			coordinates: [s.lng, s.lat],
+			radius_meters: s.radius_meters,
+		}))
+	)
+	refreshStopGlow()
+}
+
 let lastFlownNextSuggestedId = null
 
 function flyToNextSuggested() {
@@ -171,21 +200,37 @@ function flyToNextSuggested() {
  */
 async function fetchCampusEvents() {
 	try {
+		// credentials: logged-in players get a per-event `completed`
+		// flag; anonymous players get the plain list as before.
 		const res = await fetch(`${API_BASE}/api/events`, {
 			cache: 'no-store',
+			credentials: 'include',
 		})
 		if (!res.ok) return []
 		const dbEvents = await res.json()
-		const coords = await get_player_location() // returns [latitude, longitude]
-		const loc = {
-			latitude: coords[0],
-			longitude: coords[1],
+		// Completed stops disappear — ordering, pins, and circles all
+		// run on the undone list only.
+		const todoEvents = dbEvents.filter((e) => !isDoneEvent(e))
+		// Don't let a hanging GPS fix delay the pins: give it 2.5 s,
+		// then order from campus home. Live proximity still corrects
+		// itself on the first real fix.
+		let coords = null
+		try {
+			coords = await get_player_location_with_timeout(2500) // returns [latitude, longitude]
+		} catch {
+			coords = null
 		}
-		const { order } = suggestEventOrder(dbEvents, loc)
+		const loc = coords
+			? { latitude: coords[0], longitude: coords[1] }
+			: {
+					latitude: CAMPUS_HOME[1],
+					longitude: CAMPUS_HOME[0],
+				}
+		const { order } = suggestEventOrder(todoEvents, loc)
 		suggestedOrder = order
 		refreshNextSuggested()
-		if (Array.isArray(dbEvents) && dbEvents.length > 0) {
-			return dbEvents
+		if (Array.isArray(todoEvents) && todoEvents.length > 0) {
+			return todoEvents
 				.map((event) => ({
 					id: event.event_id,
 					name: event.title,
@@ -197,6 +242,7 @@ async function fetchCampusEvents() {
 						parseFloat(event.latitude),
 					],
 					radius_meters: event.radius_meters,
+					ev: event, // raw row: status/range/points badges
 					hasChallenge:
 						event.point_reward > 0 ||
 						event.hasChallenge,
@@ -220,19 +266,87 @@ async function fetchCampusEvents() {
 	return []
 }
 
-function buildPopupContent(buildingData) {
-	const challengeButtonHtml = buildingData.hasChallenge
-		? `<button style="background:#2ecc71; color:white; border:none; padding:8px 12px; border-radius:6px; margin-top:8px; width:100%; font-weight:bold; cursor:pointer;" onclick="handleChallengeAttempt('${buildingData.id}')">⚡ Attempt Challenge</button>`
-		: `<p style="margin-top: 8px; font-size: 0.85rem; color: #666;">No active challenge here.</p>`
+// Popup + sidebar badges come from js/event-status.js (shared with
+// pages/events.html): live/expired, in/out of range, distance/radius,
+// points — and Attempt Challenge only when live AND in range.
+function eventPopupFor(ev) {
+	return eventPopupHTML(ev, eventState(ev, playerCoords), {
+		onCampus: isInsideCampus(playerCoords[0], playerCoords[1]),
+		onAttempt: 'handleChallengeAttempt',
+	})
+}
 
-	return `
-    <div style="padding: 4px; min-width: 180px;">
-      <h3 style="margin: 0 0 4px 0; color: #0c2461; font-size: 1rem;">${buildingData.name}</h3>
-      <p style="margin: 4px 0; font-size: 0.85rem; color: #333;">${buildingData.description}</p>
-      <span style="font-size: 0.75rem; background: #f1f2f6; color: #2c3e50; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${buildingData.campus} &bull; ${buildingData.category}</span>
-      <div>${challengeButtonHtml}</div>
-    </div>
-  `
+// Only one event popup may be visible at a time: tapping a new pin
+// closes any previously opened popup instead of stacking them.
+function closeOtherPopups(exceptPopup = null) {
+	for (const s of stopMarkers) {
+		if (s.popup !== exceptPopup && s.popup.isOpen()) {
+			s.popup.remove()
+		}
+	}
+}
+
+function renderEventSidebar(stops) {
+	const list = document.getElementById('sidebar-events')
+	if (!list) return
+	list.innerHTML = ''
+	if (!stops.length) {
+		list.innerHTML =
+			'<div class="sidebar-event sidebar-empty">No live events right now — check back soon.</div>'
+		return
+	}
+	for (const stop of stops) {
+		const card = document.createElement('div')
+		card.className = 'sidebar-event'
+		card.dataset.id = stop.id
+		card.innerHTML = `
+			<div class="sidebar-event-title">${escapeHtml(stop.ev.title)}</div>
+			<div class="sidebar-event-meta"></div>
+		`
+		card.addEventListener('click', () => {
+			followMode = false
+			map.flyTo({
+				center: [stop.lng, stop.lat],
+				zoom: Math.max(map.getZoom(), 18),
+				duration: 600,
+			})
+			closeOtherPopups(stop.popup)
+			if (!stop.popup.isOpen()) stop.marker.togglePopup()
+			refreshEventStates()
+		})
+		list.appendChild(card)
+	}
+	refreshEventStates()
+}
+
+// Re-evaluate every stop against the player's position and the clock:
+// sidebar badges always, the open popup if there is one.
+function refreshEventStates() {
+	for (const stop of stopMarkers) {
+		const meta = document.querySelector(
+			`#sidebar-events .sidebar-event[data-id="${stop.id}"] .sidebar-event-meta`
+		)
+		if (meta)
+			meta.innerHTML = metaPillsHTML(
+				stop.ev,
+				eventState(stop.ev, playerCoords),
+				{ rangeFirst: true }
+			)
+		if (stop.popup.isOpen())
+			stop.popup.setHTML(eventPopupFor(stop.ev))
+	}
+	document.querySelectorAll('#sidebar-events .sidebar-event').forEach(
+		(card) =>
+			card.classList.toggle(
+				'active',
+				stopMarkers.some(
+					(s) =>
+						String(s.id) ===
+							card.dataset.id &&
+						s.popup.isOpen()
+				)
+			)
+	)
 }
 
 function createBuildingPinElement(building) {
@@ -587,6 +701,7 @@ function movePlayerTo([lng, lat], { center = false, accuracy = 0 } = {}) {
 		setWalking(true)
 		dropCrumb(lng, lat)
 		refreshStopGlow()
+		refreshEventStates()
 	}
 	if (center) {
 		map.easeTo({ center: playerCoords, duration: 400 })
@@ -828,6 +943,18 @@ async function checkAuthSession() {
 			const user = await res.json()
 			currentUser = user
 			updateAuthNav(user)
+		} else if (res.status === 409) {
+			// Google sign-in refused: the email belongs to a
+			// username + PIN account. Drop the Google session so this
+			// doesn't repeat on every page load, and say why.
+			const { error } = await res.json().catch(() => ({}))
+			await baSignOut()
+			currentUser = null
+			updateAuthNav(null)
+			alert(
+				error ||
+					'Google sign-in was refused for this account.'
+			)
 		} else {
 			// 401 from the backend — no valid session.
 			currentUser = null
@@ -841,7 +968,8 @@ async function checkAuthSession() {
 	}
 
 	const btnLogout = document.getElementById('btn-logout')
-	if (btnLogout) {
+	if (btnLogout && !btnLogout.dataset.bound) {
+		btnLogout.dataset.bound = 'true'
 		btnLogout.addEventListener('click', handleLogout)
 	}
 }
@@ -957,16 +1085,31 @@ function showTriviaModal(eventId, trivia) {
 	// Each button carries its option_id in a data attribute; an event
 	// listener below wires it up so the click handler can compute the
 	// real elapsed time (instead of a hardcoded value).
-	const optionsHtml = trivia.options
-		.map(
-			(opt) => `
+	// FILL_BLANK has no options (the server never sends its answer) — the
+	// player types the answer instead and the server grades the text.
+	const isFillBlank = trivia.format === 'FILL_BLANK'
+	const optionsHtml = isFillBlank
+		? `
+    <form id="trivia-fill-form" style="display: flex; gap: 8px; margin: 8px 0;">
+      <input id="trivia-fill-input" type="text" autocomplete="off" required
+             placeholder="Type your answer" aria-label="Your answer"
+             style="flex: 1; padding: 10px; border-radius: 4px; border: 1px solid #ccc;" />
+      <button type="submit" class="trivia-option-btn"
+              style="padding: 10px 16px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;">
+        Submit
+      </button>
+    </form>
+  `
+		: trivia.options
+				.map(
+					(opt) => `
     <button data-opt-id="${opt.option_id}" class="trivia-option-btn"
             style="display: block; width: 100%; margin: 8px 0; padding: 10px; border-radius: 4px; border: 1px solid #ccc; cursor: pointer;">
       ${escapeHtml(opt.body)}
     </button>
   `
-		)
-		.join('')
+				)
+				.join('')
 
 	// If the player has ALREADY earned this event's card, show a clear
 	// banner BEFORE they answer — replay is for practice, no new card.
@@ -998,7 +1141,7 @@ function showTriviaModal(eventId, trivia) {
 	// Wire option buttons via addEventListener — computes elapsed since
 	// the question opened and disables the rest to prevent double-submit.
 	let submitted = false
-	const submit = async (optionId, timedOut) => {
+	const submit = async (optionId, timedOut, answerText = null) => {
 		if (submitted) return
 		submitted = true
 		if (activeTriviaTimer) {
@@ -1016,14 +1159,30 @@ function showTriviaModal(eventId, trivia) {
 			{
 				timed_out: timedOut,
 				elapsed_ms: elapsed,
+				answer_text: answerText,
 			}
 		)
 	}
-	modal.querySelectorAll('.trivia-option-btn').forEach((btn) => {
-		btn.addEventListener('click', () => {
-			submit(Number(btn.dataset.optId), false)
+	if (isFillBlank) {
+		const fillInput = modal.querySelector('#trivia-fill-input')
+		fillInput.focus()
+		modal.querySelector('#trivia-fill-form').addEventListener(
+			'submit',
+			(e) => {
+				e.preventDefault()
+				const text = fillInput.value.trim()
+				if (!text) return
+				fillInput.disabled = true
+				submit(null, false, text)
+			}
+		)
+	} else {
+		modal.querySelectorAll('.trivia-option-btn').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				submit(Number(btn.dataset.optId), false)
+			})
 		})
-	})
+	}
 	modal.querySelector('#trivia-close-btn').addEventListener(
 		'click',
 		() => {
@@ -1069,7 +1228,11 @@ window.submitTriviaAnswer = async function (
 	optionId,
 	opts = {}
 ) {
-	const { timed_out: timedOut = false, elapsed_ms: elapsedMs = 0 } = opts
+	const {
+		timed_out: timedOut = false,
+		elapsed_ms: elapsedMs = 0,
+		answer_text: answerText = null,
+	} = opts
 	const optionsContainer = document.getElementById('trivia-options')
 	const resultContainer = document.getElementById('trivia-result')
 
@@ -1105,7 +1268,8 @@ window.submitTriviaAnswer = async function (
 		answer_time_ms: elapsedMs,
 		timed_out: !!timedOut,
 	}
-	if (!timedOut) body.selected_option_id = optionId
+	if (!timedOut && answerText !== null) body.answer_text = answerText
+	else if (!timedOut) body.selected_option_id = optionId
 	if (lat !== null) body.claimed_lat = lat
 	if (lng !== null) body.claimed_lng = lng
 
@@ -1154,6 +1318,7 @@ window.submitTriviaAnswer = async function (
 				markEventCompleted(eventId)
 				refreshNextSuggested()
 				flyToNextSuggested()
+				removeStopPin(eventId)
 			} else {
 				statusIcon = '❌'
 				statusText = 'Incorrect.'
@@ -1184,6 +1349,11 @@ window.submitTriviaAnswer = async function (
 				cardBlock = `<div style="margin-top:8px;font-size:0.8rem;color:#9ca3af;">You've already earned this event's card.</div>`
 			}
 
+			const replayHtml =
+				data.is_correct && data.already_completed
+					? `<div style="margin-top:8px;font-size:0.8rem;color:#9ca3af;">🎓 Practice run — you've already completed this event, no new points.</div>`
+					: ''
+
 			resultContainer.innerHTML = `
 				<div style="text-align:center;margin:8px 0 12px;">
 					<div style="font-size:2rem;line-height:1;">${statusIcon}</div>
@@ -1201,6 +1371,7 @@ window.submitTriviaAnswer = async function (
 					</div>
 				</div>
 				${cardBlock}
+				${replayHtml}
 			`
 		}
 	} catch (err) {
@@ -1215,6 +1386,10 @@ window.submitTriviaAnswer = async function (
  * stops always visible, challenge attempts campus-gated on tap.
  */
 async function initializeApp() {
+	// Auth first (fire-and-forget): resolve the header before the map and
+	// GPS finish loading, so the nav never flashes the wrong state while
+	// locating. The map-load handler below re-syncs once pins render.
+	checkAuthSession().catch(() => {})
 	map = new maplibregl.Map({
 		container: 'map',
 		style: createCampusStyle(),
@@ -1292,7 +1467,17 @@ async function initializeApp() {
 						createBuildingPinElement(bld)
 					const popup = new maplibregl.Popup({
 						offset: 25,
-					}).setHTML(buildPopupContent(bld))
+					}).setHTML(eventPopupFor(bld.ev))
+					// Rebuild on open so status/range are current.
+					// Close any other open popup first — one tap = one event.
+					popup.on('open', () => {
+						closeOtherPopups(popup)
+						popup.setHTML(
+							eventPopupFor(bld.ev)
+						)
+						refreshEventStates()
+					})
+					popup.on('close', refreshEventStates)
 
 					const marker = new maplibregl.Marker({
 						element: pinElement,
@@ -1303,6 +1488,8 @@ async function initializeApp() {
 						.addTo(map)
 					stopMarkers.push({
 						marker,
+						popup,
+						ev: bld.ev,
 						el: pinElement.querySelector(
 							'.pokestop-bob'
 						),
@@ -1310,9 +1497,12 @@ async function initializeApp() {
 						id: bld.id,
 						lng: bld.coordinates[0],
 						lat: bld.coordinates[1],
+						radius_meters:
+							bld.radius_meters,
 					})
 				})
 				applyNextSuggestedMarker()
+				renderEventSidebar(stopMarkers)
 				renderProximityCircles(buildings)
 				refreshStopGlow()
 				refreshFactStops()
@@ -1322,6 +1512,9 @@ async function initializeApp() {
 		}
 		await renderEventPins()
 		setInterval(renderEventPins, 30000)
+		// Pop-ups expire on a timer; keep badges honest between reloads
+		// (renderEventPins skips while a popup is open).
+		setInterval(refreshEventStates, 15000)
 		document.addEventListener('visibilitychange', () => {
 			if (!document.hidden) renderEventPins()
 		})
@@ -1329,8 +1522,13 @@ async function initializeApp() {
 		// 2b. (World tiles render their own buildings; stops are the
 		// tappable gameplay layer and are always rendered above.)
 
-		// 3. Silent auth check
+		// 3. Re-sync auth (the early check already resolved the header)
 		await checkAuthSession().catch(() => {})
+		// 3b. Terms gate: Google sign-ins land without an acceptance
+		// record — block until accepted (PIN signups accept inline).
+		if (currentUser) {
+			await ensureTermsAccepted().catch(() => false)
+		}
 
 		// 4. 🎯 resumes GPS follow and flies to the player, wherever
 		// they are in the world.
@@ -1375,6 +1573,13 @@ window.closeAuthDrawer = () => {
 
 function showDrawerStatus(message, isError) {
 	const el = document.getElementById('auth-drawer-status')
+	if (!el) return
+	el.textContent = message
+	el.className = `auth-status visible ${isError ? 'error' : 'success'}`
+}
+
+function showForgotPinStatus(message, isError) {
+	const el = document.getElementById('forgot-pin-status')
 	if (!el) return
 	el.textContent = message
 	el.className = `auth-status visible ${isError ? 'error' : 'success'}`
@@ -1462,12 +1667,23 @@ function setupAuthDrawerHandlers() {
 				showDrawerStatus('PINs do not match.', true)
 				return
 			}
+			const agreed = document.getElementById(
+				'drawer-signup-terms'
+			)?.checked
+			if (!agreed) {
+				showDrawerStatus(
+					'Please accept the Terms of Use & Privacy Policy to create an account.',
+					true
+				)
+				return
+			}
 
 			showDrawerStatus('Creating account...', false)
 			const { data, error } = await usernameSignUp(
 				name,
 				username,
-				pin
+				pin,
+				true
 			)
 
 			if (error) {
@@ -1482,9 +1698,97 @@ function setupAuthDrawerHandlers() {
 			}
 		})
 	}
+
+	// Forgot PIN: request a reset token (returned in-body in demo mode)
+	const forgotPinForm = document.getElementById('drawer-forgot-pin-form')
+	if (forgotPinForm) {
+		forgotPinForm.addEventListener('submit', async (e) => {
+			e.preventDefault()
+			const username = document
+				.getElementById('drawer-forgot-username')
+				.value.trim()
+			if (!username) {
+				showForgotPinStatus(
+					'Enter your username first.',
+					true
+				)
+				return
+			}
+			showForgotPinStatus('Sending reset token...', false)
+			const { data, error } = await requestPinReset(username)
+			if (error) {
+				showForgotPinStatus(
+					'Reset request failed: ' +
+						error.message,
+					true
+				)
+			} else if (data?.reset_token) {
+				showForgotPinStatus(
+					'Reset token (demo mode — normally emailed): ' +
+						data.reset_token +
+						' — paste it below with a new PIN.',
+					false
+				)
+			} else {
+				showForgotPinStatus(
+					data?.message ||
+						'If that username exists, a reset token was created.',
+					false
+				)
+			}
+		})
+	}
+
+	// Reset PIN: consume the token and set the new PIN
+	const resetPinForm = document.getElementById('drawer-reset-pin-form')
+	if (resetPinForm) {
+		resetPinForm.addEventListener('submit', async (e) => {
+			e.preventDefault()
+			const username = document
+				.getElementById('drawer-forgot-username')
+				.value.trim()
+			const token = document
+				.getElementById('drawer-reset-token')
+				.value.trim()
+			const newPin = document.getElementById(
+				'drawer-reset-new-pin'
+			).value
+			if (!username || !token || !newPin) {
+				showForgotPinStatus(
+					'Enter your username, the reset token and a new PIN.',
+					true
+				)
+				return
+			}
+			showForgotPinStatus('Setting new PIN...', false)
+			const { error } = await confirmPinReset(
+				username,
+				token,
+				newPin
+			)
+			if (error) {
+				showForgotPinStatus(
+					'Reset failed: ' + error.message,
+					true
+				)
+			} else {
+				showForgotPinStatus(
+					'PIN updated — you can log in now.',
+					false
+				)
+			}
+		})
+	}
 }
 
 document.addEventListener('DOMContentLoaded', () => {
 	setupAuthDrawerHandlers()
+	initTermsGate({ onDecline: () => handleLogout() })
+	initFeedback({
+		getUser: () => currentUser,
+		openAuth: () => window.openAuthDrawer(),
+	})
+	if (new URLSearchParams(window.location.search).has('feedback'))
+		window.openFeedbackDrawer?.()
 	initializeApp()
 })

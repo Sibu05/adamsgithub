@@ -1,0 +1,168 @@
+/*
+ * Campus events sidebar + event popups, shared by the main map
+ * (index.html) and pages/events.html. Markup comes from
+ * js/event-status.js; pill colours (.meta-pill) live in style.css.
+ */
+
+/* ── Sidebar ─────────────────────────────────────── */
+.map-sidebar {
+	position: absolute;
+	top: 1rem;
+	left: 1rem;
+	width: 270px;
+	max-height: calc(100% - 2rem);
+	overflow-y: auto;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	pointer-events: none; /* let map clicks through */
+}
+
+.map-sidebar > * {
+	pointer-events: auto;
+}
+
+.sidebar-header {
+	background: var(--accent);
+	color: #fff;
+	border-radius: var(--radius);
+	padding: 0.65rem 0.9rem;
+	font-size: 0.78rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	box-shadow: 0 2px 8px rgba(12, 36, 97, 0.25);
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
+}
+.sidebar-header .nav-ico {
+	width: 1rem;
+	height: 1rem;
+	display: inline-flex;
+	flex-shrink: 0;
+}
+.sidebar-header .nav-ico svg {
+	width: 100%;
+	height: 100%;
+}
+
+.sidebar-event {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 0.75rem 0.9rem;
+	cursor: pointer;
+	transition:
+		border-color var(--transition),
+		box-shadow var(--transition);
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.sidebar-event:hover {
+	border-color: var(--accent);
+	box-shadow: 0 2px 8px var(--accent-glow);
+}
+.sidebar-event.active {
+	border-color: var(--accent);
+	background: var(--accent-glow);
+}
+
+.sidebar-event-title {
+	font-size: 0.875rem;
+	font-weight: 600;
+	color: var(--text);
+	margin-bottom: 0.3rem;
+}
+
+.sidebar-event-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+}
+
+/* ── Mobile ──────────────────────────────────────── */
+@media (max-width: 720px) {
+	.map-sidebar {
+		/* Don't let the overlay swallow the map on phones */
+		width: calc(100% - 1.5rem);
+		max-height: 38%;
+		top: 0.5rem;
+		left: 0.75rem;
+	}
+	.maplibregl-popup-content {
+		min-width: 0;
+	}
+}
+
+/* ── Popup ───────────────────────────────────────── */
+.maplibregl-popup-content {
+	border-radius: var(--radius) !important;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
+	border: 1px solid var(--border) !important;
+	padding: 14px 16px !important;
+	min-width: 220px;
+}
+
+.popup-title {
+	font-family: var(--font-display);
+	font-size: 0.95rem;
+	font-weight: 700;
+	color: var(--text);
+	margin-bottom: 0.35rem;
+}
+
+.popup-desc {
+	font-size: 0.82rem;
+	color: var(--text-dim);
+	margin-bottom: 0.6rem;
+	line-height: 1.4;
+}
+
+.popup-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	margin-bottom: 0.5rem;
+}
+
+.popup-challenge-btn {
+	display: block;
+	width: 100%;
+	background: var(--accent);
+	color: #fff;
+	border: none;
+	border-radius: var(--radius);
+	padding: 0.5rem 0.75rem;
+	font-size: 0.82rem;
+	font-weight: 600;
+	cursor: pointer;
+	margin-top: 0.5rem;
+	font-family: var(--font-body);
+	transition: background var(--transition);
+}
+
+.popup-challenge-btn:hover {
+	background: var(--accent-light);
+}
+
+.popup-out-of-range {
+	font-size: 0.78rem;
+	color: var(--text-muted);
+	margin-top: 0.4rem;
+	text-align: center;
+}
+
+/* Night chrome (same instant swap as the map): sidebar
+ * header keeps white text legible on a deep-blue tone. */
+body.night .sidebar-header {
+	background: #0a2a45;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+body.night .popup-challenge-btn {
+	background: #2f9df0;
+}
+body.night .popup-challenge-btn:hover {
+	background: #7cc4ff;
+}

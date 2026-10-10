@@ -1,0 +1,100 @@
+/* In-app feedback drawer (Help us improve). The drawer shell reuses the
+   auth-drawer overlay/panel classes in index.html. */
+
+#feedback-report-form .form-group {
+	margin-bottom: 0.8rem;
+}
+
+#feedback-report-form label {
+	display: block;
+	font-size: 0.8rem;
+	font-weight: 600;
+	margin-bottom: 0.3rem;
+}
+
+#feedback-report-form select,
+#feedback-report-form input,
+#feedback-report-form textarea {
+	width: 100%;
+	padding: 0.55rem 0.7rem;
+	font-size: 0.9rem;
+	border: 1px solid var(--border, #e5e7eb);
+	border-radius: var(--radius, 8px);
+	background: var(--surface, #fff);
+	color: var(--text, #0f172a);
+	box-sizing: border-box;
+}
+
+#feedback-report-form textarea {
+	min-height: 110px;
+	resize: vertical;
+}
+
+.feedback-status {
+	margin-top: 0.7rem;
+	font-size: 0.85rem;
+	min-height: 1.2em;
+}
+
+.feedback-status.error {
+	color: #c0392b;
+}
+
+.feedback-status.success {
+	color: #16a34a;
+}
+
+.feedback-mine {
+	margin-top: 1.2rem;
+}
+
+.feedback-mine h3 {
+	font-size: 0.9rem;
+	margin-bottom: 0.5rem;
+}
+
+.feedback-mine-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	gap: 0.5rem;
+}
+
+.feedback-mine-item {
+	border: 1px solid var(--border, #e5e7eb);
+	border-radius: var(--radius, 8px);
+	padding: 0.55rem 0.7rem;
+	font-size: 0.82rem;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+}
+
+.feedback-mine-title {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.feedback-pill {
+	flex-shrink: 0;
+	font-size: 0.7rem;
+	font-weight: 700;
+	padding: 0.15rem 0.55rem;
+	border-radius: 99px;
+	border: 1px solid var(--border, #e5e7eb);
+	color: var(--text-muted, #6b7280);
+}
+
+.feedback-pill.ack {
+	border-color: rgba(245, 158, 11, 0.4);
+	color: #f59e0b;
+}
+
+.feedback-pill.res {
+	border-color: rgba(22, 163, 74, 0.4);
+	color: #16a34a;
+}

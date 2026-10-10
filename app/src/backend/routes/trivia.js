@@ -2,6 +2,7 @@ import express from 'express'
 import pool from '../utils/db.js'
 import { distance_meters } from '../utils/geo.js'
 import { canAwardCard, awardCardIfEligible } from '../services/card_award.js'
+import { analyzeMovement } from '../services/movementTrust.js'
 
 const router = express.Router()
 
@@ -32,6 +33,19 @@ function requireAuth(req, res, next) {
 // meters, which would otherwise block every attempt during dev.
 const LOCATION_VERIFICATION_ENABLED =
 	process.env.REQUIRE_LOCATION_VERIFICATION !== 'false'
+
+/**
+ * Canonical form of a typed FILL_BLANK answer: case-insensitive, with
+ * leading/trailing whitespace trimmed and inner runs collapsed to one
+ * space, so " Nelson   MANDELA " matches "Nelson Mandela".
+ */
+export function normalizeAnswer(text) {
+	return String(text ?? '')
+		.normalize('NFKC')
+		.trim()
+		.replace(/\s+/g, ' ')
+		.toLowerCase()
+}
 
 /**
  * Looks up an event's location + radius from the DB. Shared by both routes
@@ -184,11 +198,16 @@ router.get('/event/:eventId', requireAuth, async (req, res) => {
 		const question = questions[0]
 
 		// Fetch every answer choice for that specific question. Note: no
-		// is_correct here, see comment above the route.
-		const [options] = await pool.query(
-			`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
-			[question.question_id]
-		)
+		// is_correct here, see comment above the route. FILL_BLANK stores
+		// its accepted answer(s) as options, so those are never sent — the
+		// player types the answer and /submit grades the text.
+		let options = []
+		if (question.format !== 'FILL_BLANK') {
+			;[options] = await pool.query(
+				`SELECT option_id, body FROM trivia_options WHERE question_id = ?`,
+				[question.question_id]
+			)
+		}
 
 		// User story 8 — tell the frontend up front whether this player
 		// has ALREADY earned this event's card, so it can show a
@@ -197,7 +216,11 @@ router.get('/event/:eventId', requireAuth, async (req, res) => {
 		// source of truth), NOT card ownership — a player could trade or
 		// lose a card later, so ownership is not a reliable "did they ever
 		// win here?" signal.
-		const player_id = req.session.user.user_id
+		// requireAuth above guarantees one of these is set; prefer the
+		// session but fall back to req.user (e.g. token/bridge auth)
+		// instead of crashing with a TypeError.
+		const player_id =
+			req.session?.user?.user_id ?? req.user?.user_id
 		const already_earned = !(await canAwardCard(
 			pool,
 			player_id,
@@ -232,7 +255,7 @@ router.get('/event/:eventId', requireAuth, async (req, res) => {
 			body: question.body, // the actual question text
 			format: question.format, // e.g. MULTIPLE_CHOICE, TRUE_FALSE
 			time_limit_s: question.time_limit_s,
-			options: options, // array of { option_id, body }
+			options: options, // array of { option_id, body }; [] for FILL_BLANK
 			card_eligibility: {
 				// user story 8 — once-only card banner
 				already_earned, // true = this player has won this event before
@@ -274,13 +297,17 @@ router.post('/submit', requireAuth, async (req, res) => {
 		event_id,
 		question_id,
 		selected_option_id,
+		answer_text,
 		answer_time_ms,
 		claimed_lat,
 		claimed_lng,
 		timed_out: clientTimedOut,
 	} = req.body
-	const user_id = req.session.user.user_id // comes from the session cookie, not the request body — a player can't spoof this to submit as someone else
+	const user_id = req.session?.user?.user_id ?? req.user?.user_id // comes from the session, not the request body — a player can't spoof this to submit as someone else
 	const timedOut = !!clientTimedOut
+	const hasAnswerText =
+		typeof answer_text === 'string' &&
+		normalizeAnswer(answer_text) !== ''
 
 	if (!question_id) {
 		return res
@@ -288,8 +315,9 @@ router.post('/submit', requireAuth, async (req, res) => {
 			.json({ error: 'question_id is required' })
 	}
 	// Timeout submissions carry no selection — the countdown hit zero before
-	// the player picked anything. Everything else needs an option_id to grade.
-	if (!timedOut && !selected_option_id) {
+	// the player picked anything. Everything else needs an option_id (or,
+	// for FILL_BLANK, typed answer_text) to grade.
+	if (!timedOut && !selected_option_id && !hasAnswerText) {
 		return res
 			.status(400)
 			.json({ error: 'selected_option_id is required' })
@@ -299,15 +327,26 @@ router.post('/submit', requireAuth, async (req, res) => {
 		// STEP 1: Fetch the question's time_limit_s up front — needed for
 		// authoritative elapsed, timeout detection, points decay, and the
 		// speed-bracket card award regardless of whether the player answered
-		// or timed out.
+		// or timed out. format decides how STEP 3 grades.
 		const [questionRows] = await pool.query(
-			`SELECT time_limit_s FROM trivia_questions WHERE question_id = ?`,
+			`SELECT time_limit_s, format FROM trivia_questions WHERE question_id = ?`,
 			[question_id]
 		)
 		if (!questionRows.length) {
 			return res
 				.status(404)
 				.json({ error: 'Unknown question_id' })
+		}
+		const isFillBlank = questionRows[0].format === 'FILL_BLANK'
+		if (!timedOut && isFillBlank && !hasAnswerText) {
+			return res.status(400).json({
+				error: 'answer_text is required for a fill-in-the-blank question',
+			})
+		}
+		if (!timedOut && !isFillBlank && !selected_option_id) {
+			return res.status(400).json({
+				error: 'selected_option_id is required',
+			})
 		}
 		const time_limit_s = questionRows[0].time_limit_s || 30
 		const time_limit_ms = time_limit_s * 1000
@@ -362,7 +401,18 @@ router.post('/submit', requireAuth, async (req, res) => {
 		// option_id AND question_id together, so submitting an option_id
 		// from a different question still 404s instead of grading.
 		let isCorrect = false
-		if (!timedOutFinal) {
+		if (!timedOutFinal && isFillBlank) {
+			// FILL_BLANK: the accepted answer(s) are the question's
+			// is_correct options. Compare ignoring case and whitespace.
+			const [accepted] = await pool.query(
+				`SELECT body FROM trivia_options WHERE question_id = ? AND is_correct = 1`,
+				[question_id]
+			)
+			const given = normalizeAnswer(answer_text)
+			isCorrect = accepted.some(
+				(o) => normalizeAnswer(o.body) === given
+			)
+		} else if (!timedOutFinal) {
 			const [options] = await pool.query(
 				`SELECT is_correct FROM trivia_options WHERE option_id = ? AND question_id = ?`,
 				[selected_option_id, question_id]
@@ -434,10 +484,12 @@ router.post('/submit', requireAuth, async (req, res) => {
 				parseFloat(event.latitude),
 				parseFloat(event.longitude)
 			)
+			// 'FAILED' (not 'REJECTED') — must be a value of the
+			// location_check_log.status ENUM, or the insert errors.
 			locationStatus =
 				distance <= event.radius_meters
 					? 'VERIFIED'
-					: 'REJECTED'
+					: 'FAILED'
 		}
 
 		const locationVerified =
@@ -452,8 +504,13 @@ router.post('/submit', requireAuth, async (req, res) => {
 		//     points = max(1, round(reward × (1 - elapsed_fraction / 2)))
 		//   Timeouts and incorrect answers always earn 0 regardless of speed
 		//   or location — points require all three: correct, on time, verified.
+		//   Points are also ONCE-ONLY per event: a replay of an already-
+		//   completed event earns 0 (practice mode). The prior-win check
+		//   runs inside the transaction below and zeroes this out.
 		const baseReward = event?.point_reward || 10
-		const pointsAwarded =
+		let hadPriorWin = false
+		let isReplayWin = false
+		let pointsAwarded =
 			isCorrect && locationVerified && !timedOutFinal
 				? Math.max(
 						1,
@@ -484,11 +541,47 @@ router.post('/submit', requireAuth, async (req, res) => {
 		try {
 			await conn.beginTransaction()
 
-			// 8a. Log the location check with REAL values (replaces the old
-			// hardcoded 0, 0, 0, 'VERIFIED').
+			// 8a. Once-only points: has this player already logged a
+			// counted win on this event (verified correct attempt or
+			// card award)? Replays still log the attempt below but
+			// earn 0 points — checked here, before the insert, so the
+			// current attempt never counts itself as the prior win.
+			const [priorWinRows] = await conn.query(
+				`SELECT (EXISTS(
+					SELECT 1 FROM trivia_attempts ta
+					JOIN location_check_log l ON l.check_id = ta.location_check_id
+					WHERE ta.user_id = ? AND ta.event_id = ? AND ta.is_correct = 1
+					  AND l.status IN ('VERIFIED', 'FALLBACK_QR')
+				) OR EXISTS(
+					SELECT 1 FROM event_card_awards eca
+					WHERE eca.user_id = ? AND eca.event_id = ?
+				)) AS had_prior_win`,
+				[user_id, event_id, user_id, event_id]
+			)
+			hadPriorWin = Boolean(priorWinRows[0]?.had_prior_win)
+			if (hadPriorWin) pointsAwarded = 0
+			isReplayWin =
+				hadPriorWin &&
+				isCorrect &&
+				locationVerified &&
+				!timedOutFinal
+
+			// 8b. Movement trust check (Sprint 2 anti-cheat v1): compare
+			// against the player's previous verified check. FLAG ONLY — the
+			// result is stored for moderators and never changes the status,
+			// points or card outcome of this attempt.
+			const movement = await analyzeMovement(
+				conn,
+				user_id,
+				parseFloat(claimed_lat),
+				parseFloat(claimed_lng)
+			)
+
+			// 8c. Log the location check with REAL values, plus the movement
+			// trust result.
 			const [locCheck] = await conn.query(
-				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+				`INSERT INTO location_check_log (user_id, event_id, claimed_lat, claimed_lng, distance_meters, status, prev_check_id, travel_speed_ms, movement_flagged)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					user_id,
 					event_id,
@@ -498,10 +591,13 @@ router.post('/submit', requireAuth, async (req, res) => {
 						? Math.round(distance)
 						: 0,
 					locationStatus,
+					movement.prevCheckId,
+					movement.travelSpeedMps,
+					movement.isSuspicious,
 				]
 			)
 
-			// 8b. Award the card — once-only, at the player's speed bracket.
+			// 8d. Award the card — once-only, at the player's speed bracket.
 			// Only a correct, on-time, location-verified answer is eligible;
 			// wrong, timed-out, or out-of-range attempts never trigger
 			// issuance. awardCardIfEligible does the canAwardCard check
@@ -522,7 +618,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 							reason: 'NOT_A_WIN',
 						}
 
-			// 8c. Record the attempt itself, carrying the awarded card_id (or
+			// 8e. Record the attempt itself, carrying the awarded card_id (or
 			// NULL). This row is what canAwardCard later queries to answer
 			// "has this player ever won this event?" — so it MUST be inserted
 			// after, not before, the award check (see the ordering note above).
@@ -542,7 +638,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 				]
 			)
 
-			// 8d. Only touch the points ledger when points were actually
+			// 8f. Only touch the points ledger when points were actually
 			// awarded — avoids a redundant 0-point UPDATE. Note: points are
 			// awarded on every correct+verified answer, including retries for
 			// practice; only the CARD is once-only (the story's scope).
@@ -576,8 +672,8 @@ router.post('/submit', requireAuth, async (req, res) => {
 				'You were too far from this location for that attempt to count.'
 		} else if (isCorrect && award.awarded) {
 			message = `Correct! You earned ${pointsAwarded} points and a new card: ${award.card.name} (${award.card.rarity})!`
-		} else if (isCorrect && award.reason === 'ALREADY_EARNED') {
-			message = `Correct! You earned ${pointsAwarded} points. You've already earned this card — no new card this time.`
+		} else if (isReplayWin) {
+			message = `Correct! You've already completed this event — practice only, no new points.`
 		} else if (isCorrect) {
 			message = `Correct! You earned ${pointsAwarded} points.`
 		} else {
@@ -598,6 +694,7 @@ router.post('/submit', requireAuth, async (req, res) => {
 			card_awarded: award.awarded, // user story 8 — was a new card issued this attempt?
 			awarded_card: award.card, // { card_id, name, image_url, rarity, category } | null
 			already_earned_card: award.reason === 'ALREADY_EARNED', // true on a winning retry-after-win
+			already_completed: isReplayWin, // replay of a completed event: practice only, 0 points
 			correct_option_id: correctOption?.option_id ?? null,
 			correct_option_text: correctOption?.body ?? null,
 			message,
